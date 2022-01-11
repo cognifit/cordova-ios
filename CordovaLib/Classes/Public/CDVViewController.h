@@ -75,4 +75,6 @@
 
 - (void)showLaunchScreen:(BOOL)visible;
 
+- (void)reloadApp;
+
 @end
