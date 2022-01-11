@@ -783,6 +783,26 @@
 
 // ///////////////////////
 
+- (void) reloadApp {
+    WKWebView *webView = (WKWebView *) self.webView;
+    WKUserContentController *controller = webView.configuration.userContentController;
+    [controller removeAllUserScripts];
+    if (@available(iOS 14.0, *)) {
+        [controller removeAllScriptMessageHandlers];
+    } else {
+        [controller removeScriptMessageHandlerForName:@"cordova"];
+        [controller removeScriptMessageHandlerForName:@"stopScroll"];
+    }
+    
+    UIView *aView = self.webView.superview;
+    for (UIView *subview in aView.subviews) {
+        [subview removeFromSuperview];
+    }
+    
+    self.webViewEngine = nil;
+    [self viewDidLoad];
+}
+
 - (void)dealloc
 {
     [[NSNotificationCenter defaultCenter] removeObserver:self];

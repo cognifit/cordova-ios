@@ -95,6 +95,8 @@ NS_ASSUME_NONNULL_BEGIN
 
 - (void)showLaunchScreen:(BOOL)visible;
 
+- (void)reloadApp;
+
 NS_ASSUME_NONNULL_END
 
 @end
