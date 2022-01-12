@@ -36,6 +36,7 @@
 @property (nonatomic, readwrite, strong) NSDictionary* pluginsMap;
 @property (nonatomic, readwrite, strong) id <CDVWebViewEngineProtocol> webViewEngine;
 @property (nonatomic, readwrite, strong) UIView* launchView;
+@property (nonatomic, readwrite, strong) UIView* backgroundView;
 
 @property (readwrite, assign) BOOL initialized;
 
@@ -298,6 +299,10 @@
     }
 
     // /////////////////
+    
+    if (!self.backgroundView) {
+        [self createBackgroundView];
+    }
 
     if ([self.startupPluginNames count] > 0) {
         [CDVTimer start:@"TotalPluginStartup"];
@@ -546,6 +551,27 @@
 
     [self.view addSubview:view];
     [self.view sendSubviewToBack:view];
+}
+
+- (void)createBackgroundView
+{
+    // we don't want to have to find out if there's a notch or not, we simply make the view bigger
+    CGRect viewBounds = self.view.bounds;
+    viewBounds.origin.x = -60;
+    viewBounds.origin.y = -60;
+    viewBounds.size.width += 120;
+    viewBounds.size.height += 120;
+    
+    WKWebView* webView = [[WKWebView alloc] initWithFrame:viewBounds];
+    NSString* path = [NSBundle.mainBundle pathForResource:@"loadingScreenStyle1" ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
+    NSString* loadingScreenStyle1Html = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    webView.hidden = YES;
+    [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
+    webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+
+    [self.view addSubview:webView];
+    [self.view sendSubviewToBack:webView];
+    self.backgroundView = webView;
 }
 
 - (void)didReceiveMemoryWarning
@@ -799,6 +825,7 @@
     [UIView animateWithDuration:fadeDuration animations:^{
         [self.launchView setAlpha:(visible ? 1 : 0)];
     }];
+    self.backgroundView.hidden = YES;
 }
 
 // ///////////////////////
@@ -813,11 +840,17 @@
         [controller removeScriptMessageHandlerForName:@"cordova"];
         [controller removeScriptMessageHandlerForName:@"stopScroll"];
     }
-    
+
     UIView *aView = self.webView.superview;
     for (UIView *subview in aView.subviews) {
+        if ([self.backgroundView isEqual:subview]) {
+            continue;
+        };
         [subview removeFromSuperview];
     }
+
+    [self.view bringSubviewToFront:self.backgroundView];
+    self.backgroundView.hidden = NO;
     
     self.webViewEngine = nil;
     [self viewDidLoad];

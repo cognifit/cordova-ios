@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+  <!-- We copied the styles from the loading screen displayed when loading a task so we can use this 'simple' HTML to display a loading screen on any WKWebView we need -->
+  <head>
+    <meta charset="utf-8" />
+    <meta http-equiv="x-ua-compatible" content="ie=edge" />
+    <meta name="viewport" content="width=device-width, height=device-height, viewport-fit=cover, initial-scale=1, minimum-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  </head>
+  <style>
+    body {
+      width: 100%;
+      height: 100%;
+      background: #f2ede7;
+    }
+    .activityOverlay {
+      background: #f2ede7;
+      position: absolute;
+      height: 100%;
+      width: 100%;
+      z-index: 100;
+    }
+    .activityOverlayTab {
+      display: table;
+      margin: 0 auto;
+      height: 100%;
+      vertical-align: middle;
+    }
+    .activityOverlayInt {
+      display: table-cell;
+      vertical-align: middle;
+      text-align: center;
+    }
+    .mat-progress-spinner {
+      display: block;
+      position: relative;
+      overflow: hidden;
+    }
+    .mat-progress-spinner svg {
+      position: absolute;
+      transform: rotate(-90deg);
+      top: 0;
+      left: 0;
+      transform-origin: center;
+      overflow: visible;
+    }
+    .mat-progress-spinner.mat-progress-spinner-indeterminate-animation svg {
+      animation-duration: 2000ms;
+      animation-timing-function: linear;
+      animation-delay: 0s;
+      animation-iteration-count: infinite;
+      animation-direction: normal;
+      animation-fill-mode: none;
+      animation-play-state: running;
+      animation-name: mat-progress-spinner-linear-rotate;
+    }
+    .mat-progress-spinner.mat-progress-spinner-indeterminate-animation circle {
+      transition-property: stroke;
+      animation-duration: 4000ms;
+      animation-timing-function: cubic-bezier(0.35, 0, 0.25, 1);
+      animation-iteration-count: infinite;
+    }
+    .mat-progress-spinner circle {
+      stroke: white;
+      fill: transparent;
+      transform-origin: center;
+      transition-property: stroke-dashoffset;
+      transition-duration: 225ms;
+      transition-timing-function: linear;
+      transition-delay: 0s;
+    }
+
+    @keyframes mat-progress-spinner-linear-rotate {
+      0% {
+        transform: rotate(0deg);
+      }
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+    @keyframes mat-progress-spinner-stroke-rotate-100 {
+      0% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotate(0);
+      }
+      12.5% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotate(0);
+      }
+      12.5001% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotateX(180deg) rotate(72.5deg);
+      }
+      25% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotateX(180deg) rotate(72.5deg);
+      }
+      25.0001% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotate(270deg);
+      }
+      37.5% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotate(270deg);
+      }
+      37.5001% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotateX(180deg) rotate(161.5deg);
+      }
+      50% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotateX(180deg) rotate(161.5deg);
+      }
+      50.0001% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotate(180deg);
+      }
+      62.5% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotate(180deg);
+      }
+      62.5001% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotateX(180deg) rotate(251.5deg);
+      }
+      75% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotateX(180deg) rotate(251.5deg);
+      }
+      75.0001% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotate(90deg);
+      }
+      87.5% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotate(90deg);
+      }
+      87.5001% {
+        stroke-dashoffset: 56.5486677px;
+        transform: rotateX(180deg) rotate(341.5deg);
+      }
+      100% {
+        stroke-dashoffset: 268.606171575px;
+        transform: rotateX(180deg) rotate(341.5deg);
+      }
+    }
+    @keyframes mat-progress-spinner-stroke-rotate-fallback {
+      0% {
+        transform: rotate(0deg);
+      }
+      25% {
+        transform: rotate(1170deg);
+      }
+      50% {
+        transform: rotate(2340deg);
+      }
+      75% {
+        transform: rotate(3510deg);
+      }
+      100% {
+        transform: rotate(4680deg);
+      }
+    }
+  </style>
+  <body>
+    <div class="activityOverlay">
+      <div class="activityOverlayTab">
+        <div class="activityOverlayInt">
+          <div
+            class="mat-spinner mat-progress-spinner mat-primary mat-progress-spinner-indeterminate-animation"
+            style="width: 100px; height: 100px"
+          >
+            <svg
+              preserveAspectRatio="xMidYMid meet"
+              focusable="false"
+              aria-hidden="true"
+              ng-reflect-ng-switch="true"
+              viewBox="0 0 100 100"
+              style="width: 100px; height: 100px"
+            >
+              <circle
+                cx="50%"
+                cy="50%"
+                r="45"
+                class="ng-star-inserted"
+                style="animation-name: mat-progress-spinner-stroke-rotate-100; stroke-dasharray: 282.743px; stroke-width: 10%"
+              ></circle>
+            </svg>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
