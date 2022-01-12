@@ -53,8 +53,8 @@
 @property (nonatomic, readonly, strong) id <CDVCommandDelegate> commandDelegate;
 
 /**
-	Takes/Gives an array of UIInterfaceOrientation (int) objects
-	ex. UIInterfaceOrientationPortrait
+    Takes/Gives an array of UIInterfaceOrientation (int) objects
+    ex. UIInterfaceOrientationPortrait
 */
 @property (nonatomic, readwrite, strong) NSArray* supportedOrientations;
 
@@ -75,6 +75,7 @@
 
 - (void)showLaunchScreen:(BOOL)visible;
 
+- (void)showNativeBackgroundView;
 - (void)reloadApp;
 
 @end

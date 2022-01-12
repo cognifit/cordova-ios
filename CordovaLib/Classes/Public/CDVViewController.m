@@ -830,6 +830,11 @@
 
 // ///////////////////////
 
+- (void)showNativeBackgroundView {
+    [self.view bringSubviewToFront:self.backgroundView];
+    self.backgroundView.hidden = NO;
+}
+
 - (void) reloadApp {
     WKWebView *webView = (WKWebView *) self.webView;
     WKUserContentController *controller = webView.configuration.userContentController;
@@ -849,8 +854,7 @@
         [subview removeFromSuperview];
     }
 
-    [self.view bringSubviewToFront:self.backgroundView];
-    self.backgroundView.hidden = NO;
+    [self showNativeBackgroundView];
     
     self.webViewEngine = nil;
     [self viewDidLoad];
