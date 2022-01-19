@@ -37,6 +37,7 @@
 @property (nonatomic, readwrite, strong) id <CDVWebViewEngineProtocol> webViewEngine;
 @property (nonatomic, readwrite, strong) UIView* launchView;
 @property (nonatomic, readwrite, strong) UIView* backgroundView;
+@property (readwrite, assign) NSInteger loadCounter;
 
 @property (readwrite, assign) BOOL initialized;
 
@@ -82,6 +83,7 @@
         [self printVersion];
         [self printMultitaskingInfo];
         [self printPlatformVersionWarning];
+        self.loadCounter = 0;
         self.initialized = YES;
     }
 }
@@ -792,6 +794,10 @@
 - (void)onWebViewPageDidLoad:(NSNotification*)notification
 {
     self.webView.hidden = NO;
+    
+    // this counter will always be 0 (and 1 after the update) UNLESS iOS reloaded our web content
+    self.loadCounter = self.loadCounter + 1;
+    [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.ionicWebViewLoadCounter = %li;", self.loadCounter] completionHandler:nil];
 
     if ([self.settings cordovaBoolSettingForKey:@"AutoHideSplashScreen" defaultValue:YES]) {
         CGFloat splashScreenDelaySetting = [self.settings cordovaFloatSettingForKey:@"SplashScreenDelay" defaultValue:0];
@@ -856,6 +862,7 @@
 
     [self showNativeBackgroundView];
     
+    self.loadCounter = 0;
     self.webViewEngine = nil;
     [self viewDidLoad];
 }
