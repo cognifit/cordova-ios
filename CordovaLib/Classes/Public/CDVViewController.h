@@ -75,7 +75,14 @@
 
 - (void)showLaunchScreen:(BOOL)visible;
 
+typedef void (^_Nullable VoidCompletionHandler)(BOOL);
+typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
+
 - (void)showNativeBackgroundView;
 - (void)reloadApp;
+- (BOOL)createWebViewClone;
+- (void)showWebViewClone:(VoidCompletionHandler)completionHandler;
+- (BOOL)dismissWebViewClone;
+- (void)loadTaskInWebViewCloneWithJsCommand:(NSString* _Nonnull)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler;
 
 @end

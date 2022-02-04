@@ -27,6 +27,22 @@
 #import "CDVCommandDelegateImpl.h"
 #import <Foundation/NSCharacterSet.h>
 
+@interface CloneMessageHandler : NSObject<WKScriptMessageHandler>
+
+@property (nonatomic, weak, readonly) CDVViewController* viewController;
+
+- (instancetype)initWithViewController:(CDVViewController*)viewController;
+
+@end
+
+@interface WebViewWeakScriptMessageHandler : NSObject <WKScriptMessageHandler>
+
+@property (nonatomic, weak, readonly) id<WKScriptMessageHandler>scriptMessageHandler;
+
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandler>)scriptMessageHandler;
+
+@end
+
 @interface CDVViewController () { }
 
 @property (nonatomic, readwrite, strong) NSXMLParser* configParser;
@@ -37,7 +53,15 @@
 @property (nonatomic, readwrite, strong) id <CDVWebViewEngineProtocol> webViewEngine;
 @property (nonatomic, readwrite, strong) UIView* launchView;
 @property (nonatomic, readwrite, strong) UIView* backgroundView;
+
 @property (readwrite, assign) NSInteger loadCounter;
+
+@property (nonatomic, readwrite, strong) CDVViewController* clone;
+@property (readwrite, assign) BOOL isClone;
+@property (nonatomic, readwrite, strong) id<WKScriptMessageHandler> cloneMessageHandler;
+@property (nonatomic, readwrite, strong) VoidCompletionHandler showWebViewCloneCompletionHandler;
+@property (nonatomic, readwrite, strong) TaskCompletionHandler loadTaskInWebViewCloneCompletionHandler;
+@property (nonatomic, readwrite, weak) CDVViewController* cloneParent;
 
 @property (readwrite, assign) BOOL initialized;
 
@@ -54,6 +78,7 @@
 @synthesize commandDelegate = _commandDelegate;
 @synthesize commandQueue = _commandQueue;
 @synthesize webViewEngine = _webViewEngine;
+
 @dynamic webView;
 
 - (void)__init
@@ -305,7 +330,7 @@
     if (!self.backgroundView) {
         [self createBackgroundView];
     }
-
+    
     if ([self.startupPluginNames count] > 0) {
         [CDVTimer start:@"TotalPluginStartup"];
 
@@ -550,6 +575,16 @@
     UIView* view = [self newCordovaViewWithFrame:webViewBounds];
     view.hidden = YES;
     view.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+    
+    if (self.isClone) {
+        WKWebView* cloneWebView = (WKWebView*) view;
+        WKUserScript* script = [[WKUserScript alloc] initWithSource:@"window['__$cognifit$__isWebViewClone'] = true;" injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:true];
+        [cloneWebView.configuration.userContentController addUserScript:script];
+        
+        self.cloneMessageHandler = [[CloneMessageHandler alloc] initWithViewController:self.cloneParent];
+        WebViewWeakScriptMessageHandler *weakScriptMessageHandler = [[WebViewWeakScriptMessageHandler alloc] initWithScriptMessageHandler:self.cloneMessageHandler];
+        [cloneWebView.configuration.userContentController addScriptMessageHandler:weakScriptMessageHandler name:@"webViewParent"];
+    }
 
     [self.view addSubview:view];
     [self.view sendSubviewToBack:view];
@@ -861,10 +896,64 @@
     }
 
     [self showNativeBackgroundView];
-    
+
     self.loadCounter = 0;
     self.webViewEngine = nil;
     [self viewDidLoad];
+}
+
+- (BOOL)createWebViewClone {
+    if (self.clone == nil) {
+        self.clone = [[CDVViewController alloc] init];
+        self.clone.isClone = true;
+        self.clone.cloneParent = self;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+- (void)showWebViewClone:(VoidCompletionHandler)completionHandler {
+    if (self.clone) {
+        self.showWebViewCloneCompletionHandler = completionHandler;
+        
+        [self.view addSubview:self.clone.view];
+        [self.view sendSubviewToBack:self.clone.view];
+    } else {
+        completionHandler(false);
+    }
+}
+
+- (BOOL)dismissWebViewClone {
+    if (self.clone) {
+        WKWebView* cloneWebView = (WKWebView*) self.clone.webView;
+        [cloneWebView.configuration.userContentController removeAllUserScripts];
+        if (@available(iOS 14.0, *)) {
+            [cloneWebView.configuration.userContentController removeAllScriptMessageHandlers];
+        } else {
+            [cloneWebView.configuration.userContentController removeScriptMessageHandlerForName:@"webViewCloneMessageHandler"];
+        }
+        self.cloneMessageHandler = nil;
+        self.showWebViewCloneCompletionHandler = nil;
+        self.loadTaskInWebViewCloneCompletionHandler = nil;
+        
+        [self.clone.view removeFromSuperview];
+        self.clone = nil;
+        return true;
+    } else {
+        return false;
+    }
+}
+
+- (void)loadTaskInWebViewCloneWithJsCommand:(NSString* _Nonnull)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler {
+    if (self.clone) {
+        self.loadTaskInWebViewCloneCompletionHandler = completionHandler;
+        [self.clone.webViewEngine evaluateJavaScript:jsCommand completionHandler:^(id result, NSError* error) {
+            
+            // if we fail we don't care, we simply log for debugging
+            NSLog(@"loadTaskInWebViewCloneWithJsCommand result: %@, error? %@", result, error);
+        }];
+    }
 }
 
 - (void)dealloc
@@ -878,6 +967,60 @@
     [self.pluginObjects removeAllObjects];
     [self.webView removeFromSuperview];
     self.webViewEngine = nil;
+}
+
+@end
+
+#pragma mark - CloneMessageHandler
+
+@implementation CloneMessageHandler
+
+- (instancetype)initWithViewController:(CDVViewController*)viewController {
+    self = [super init];
+    if (self) {
+        _viewController = viewController;
+    }
+    return self;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    
+    if (![message.name isEqualToString:@"webViewParent"]) return;
+    if (![message.body isKindOfClass:[NSDictionary class]]) return;
+    
+    NSDictionary* body = (NSDictionary *)message.body;
+    if ([body[@"title"] isEqualToString:@"UP_AND_RUNNING"]) {
+        if (self.viewController.showWebViewCloneCompletionHandler != nil) {
+            [self.viewController.view bringSubviewToFront:self.viewController.clone.view];
+            self.viewController.showWebViewCloneCompletionHandler(true);
+        }
+        self.viewController.showWebViewCloneCompletionHandler = nil;
+    } else if ([body[@"title"] isEqualToString:@"TRAINING_TASK_FINISHED"]) {
+        if (self.viewController.loadTaskInWebViewCloneCompletionHandler != nil) {
+            self.viewController.loadTaskInWebViewCloneCompletionHandler(body);
+        }
+        self.viewController.loadTaskInWebViewCloneCompletionHandler = nil;
+    }
+}
+
+@end
+
+#pragma mark - WebViewWeakScriptMessageHandler
+
+@implementation WebViewWeakScriptMessageHandler
+
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandler>)scriptMessageHandler
+{
+    self = [super init];
+    if (self) {
+        _scriptMessageHandler = scriptMessageHandler;
+    }
+    return self;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message
+{
+    [self.scriptMessageHandler userContentController:userContentController didReceiveScriptMessage:message];
 }
 
 @end
