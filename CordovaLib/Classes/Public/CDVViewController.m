@@ -600,10 +600,7 @@
     viewBounds.size.height += 120;
     
     WKWebView* webView = [[WKWebView alloc] initWithFrame:viewBounds];
-    NSString* path = [NSBundle.mainBundle pathForResource:@"loadingScreenStyle1" ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
-    NSString* loadingScreenStyle1Html = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
     webView.hidden = YES;
-    [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
     webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
 
     [self.view addSubview:webView];
@@ -871,12 +868,17 @@
 
 // ///////////////////////
 
-- (void)showNativeBackgroundView {
+- (void)showNativeBackgroundView:(NSString *)backgroundStyle {
+    WKWebView* webView = (WKWebView*) self.backgroundView;
+    NSString* path = [NSBundle.mainBundle pathForResource:backgroundStyle ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
+    NSString* loadingScreenStyle1Html = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
+    
     [self.view bringSubviewToFront:self.backgroundView];
     self.backgroundView.hidden = NO;
 }
 
-- (void) reloadApp {
+- (void) reloadApp:(NSString *)backgroundStyle {
     WKWebView *webView = (WKWebView *) self.webView;
     WKUserContentController *controller = webView.configuration.userContentController;
     [controller removeAllUserScripts];
@@ -895,7 +897,7 @@
         [subview removeFromSuperview];
     }
 
-    [self showNativeBackgroundView];
+    [self showNativeBackgroundView:backgroundStyle];
 
     self.loadCounter = 0;
     self.webViewEngine = nil;
