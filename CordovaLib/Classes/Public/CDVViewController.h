@@ -78,8 +78,8 @@
 typedef void (^_Nullable VoidCompletionHandler)(BOOL);
 typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 
-- (void)showNativeBackgroundView:(NSString * _Nonnull)backgroundStyle;
-- (void)reloadApp:(NSString * _Nonnull)backgroundStyle;
+- (void)showNativeBackgroundView:(NSString * _Nonnull)backgroundStyle andStrokeColor:(NSString * _Nullable)strokeColor;
+- (void)reloadAppWithBackgroundStyle:(NSString * _Nonnull)backgroundStyle andStrokeColor:(NSString * _Nullable)strokeColor;
 - (BOOL)createWebViewClone;
 - (void)showWebViewClone:(VoidCompletionHandler)completionHandler;
 - (BOOL)dismissWebViewClone;

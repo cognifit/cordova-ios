@@ -868,17 +868,22 @@
 
 // ///////////////////////
 
-- (void)showNativeBackgroundView:(NSString *)backgroundStyle {
+- (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor {
     WKWebView* webView = (WKWebView*) self.backgroundView;
     NSString* path = [NSBundle.mainBundle pathForResource:backgroundStyle ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
     NSString* loadingScreenStyle1Html = [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil];
+    if (strokeColor != nil) {
+        NSString *defaultStrokeColor = [backgroundStyle isEqualToString:@"loadingScreenStyle1"] ? @"stroke: #007cd5;" : @"stroke: #3399ff;";
+        NSString *strokeColorStyle = [NSString stringWithFormat:@"stroke: %@;", strokeColor];
+        loadingScreenStyle1Html = [loadingScreenStyle1Html stringByReplacingOccurrencesOfString:defaultStrokeColor withString:strokeColorStyle];
+    }
     [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
     
     [self.view bringSubviewToFront:self.backgroundView];
     self.backgroundView.hidden = NO;
 }
 
-- (void) reloadApp:(NSString *)backgroundStyle {
+- (void) reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor {
     WKWebView *webView = (WKWebView *) self.webView;
     WKUserContentController *controller = webView.configuration.userContentController;
     [controller removeAllUserScripts];
@@ -897,7 +902,7 @@
         [subview removeFromSuperview];
     }
 
-    [self showNativeBackgroundView:backgroundStyle];
+    [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
 
     self.loadCounter = 0;
     self.webViewEngine = nil;
