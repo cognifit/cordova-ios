@@ -919,7 +919,7 @@
         [subview removeFromSuperview];
     }
 
-    [self showNativeBackgroundView:backgroundStyle];
+    [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
 
     self.loadCounter = 0;
     self.webViewEngine = nil;
