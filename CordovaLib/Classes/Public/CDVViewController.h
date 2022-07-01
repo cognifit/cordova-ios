@@ -84,5 +84,6 @@ typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 - (void)showWebViewClone:(VoidCompletionHandler)completionHandler;
 - (BOOL)dismissWebViewClone;
 - (void)loadTaskInWebViewCloneWithJsCommand:(NSString* _Nonnull)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler;
+- (BOOL)runActivity:(NSDictionary * _Nonnull)activity withAccessToken:(NSString* _Nonnull)accessToken andRefreshToken:(NSString* _Nonnull)refreshToken;
 
 @end

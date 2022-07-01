@@ -56,6 +56,11 @@
 
 @property (readwrite, assign) NSInteger loadCounter;
 
+@property (readwrite, assign) BOOL isPartnerApp;
+@property (readwrite, strong) NSString* accessToken;
+@property (readwrite, strong) NSString* refreshToken;
+@property (readwrite, strong) NSString* activity;
+
 @property (nonatomic, readwrite, strong) CDVViewController* clone;
 @property (readwrite, assign) BOOL isClone;
 @property (nonatomic, readwrite, strong) id<WKScriptMessageHandler> cloneMessageHandler;
@@ -576,6 +581,18 @@
     view.hidden = YES;
     view.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
     
+    if (self.isPartnerApp) {
+        WKWebView* webView = (WKWebView*) view;
+        NSString *template = @"\
+                window['__$cognifit$__isPartnerApp'] = true;\
+                window['__$cognifit$__activity'] = '%@';\
+                window['__$cognifit$__accessToken'] = '%@';\
+                window['__$cognifit$__refreshToken'] = '%@';";
+        NSString *scriptSource = [NSString stringWithFormat:template, self.activity, self.accessToken, self.refreshToken];
+        WKUserScript* script = [[WKUserScript alloc] initWithSource:scriptSource injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:true];
+        [webView.configuration.userContentController addUserScript:script];
+    }
+    
     if (self.isClone) {
         WKWebView* cloneWebView = (WKWebView*) view;
         WKUserScript* script = [[WKUserScript alloc] initWithSource:@"window['__$cognifit$__isWebViewClone'] = true;" injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:true];
@@ -902,7 +919,7 @@
         [subview removeFromSuperview];
     }
 
-    [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
+    [self showNativeBackgroundView:backgroundStyle];
 
     self.loadCounter = 0;
     self.webViewEngine = nil;
@@ -961,6 +978,24 @@
             NSLog(@"loadTaskInWebViewCloneWithJsCommand result: %@, error? %@", result, error);
         }];
     }
+}
+
+- (BOOL)runActivity:(NSDictionary * _Nonnull)activity withAccessToken:(NSString* _Nonnull)accessToken andRefreshToken:(NSString* _Nonnull)refreshToken {
+    self.isPartnerApp = true;
+    
+    NSError* error = nil;
+    NSData* jsonData = [NSJSONSerialization dataWithJSONObject:activity
+                                                       options:0
+                                                         error:&error];
+    if (error == nil) {
+        self.activity = [[NSString alloc] initWithData:jsonData encoding:NSUTF8StringEncoding];
+    } else {
+        self.activity = @"__ABORT__";
+    }
+    
+    self.accessToken = accessToken;
+    self.refreshToken = refreshToken;
+    return error == nil;
 }
 
 - (void)dealloc
