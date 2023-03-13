@@ -27,6 +27,9 @@
 #import "CDVCommandDelegateImpl.h"
 #import <Foundation/NSCharacterSet.h>
 
+/** Flag to know if the App is "cold booting" or not. This value is passed to the web App. */
+BOOL IS_COLD_BOOT = YES;
+
 @interface CloneMessageHandler : NSObject<WKScriptMessageHandler>
 
 @property (nonatomic, weak, readonly) CDVViewController* viewController;
@@ -829,7 +832,8 @@
     
     // this counter will always be 0 (and 1 after the update) UNLESS iOS reloaded our web content
     self.loadCounter = self.loadCounter + 1;
-    [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.ionicWebViewLoadCounter = %li;", self.loadCounter] completionHandler:nil];
+    [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.ionicWebViewLoadCounter = %li; window.ionicIsColdBoot = %s;", self.loadCounter, IS_COLD_BOOT ? "true" : "false"] completionHandler:nil];
+    IS_COLD_BOOT = NO;
 
     if ([self.settings cordovaBoolSettingForKey:@"AutoHideSplashScreen" defaultValue:YES]) {
         CGFloat splashScreenDelaySetting = [self.settings cordovaFloatSettingForKey:@"SplashScreenDelay" defaultValue:0];
