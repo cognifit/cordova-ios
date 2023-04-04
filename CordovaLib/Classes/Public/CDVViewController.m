@@ -546,6 +546,13 @@ BOOL IS_COLD_BOOT = YES;
     if ([self.webViewEngine isKindOfClass:[CDVPlugin class]]) {
         [self registerPlugin:(CDVPlugin*)self.webViewEngine withClassName:webViewEngineClass];
     }
+    
+    #if DEBUG
+    // under iOS 16.4 we must enable the Safari-debugger explicitly
+    if (@available(macOS 13.3, iOS 16.4, tvOS 16.4, *)) {
+        ((WKWebView *) self.webViewEngine.engineWebView).inspectable = true;
+    }
+    #endif
 
     return self.webViewEngine.engineWebView;
 }
