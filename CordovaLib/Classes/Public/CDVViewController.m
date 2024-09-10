@@ -40,7 +40,7 @@ UIColor* defaultBackgroundColor(void) {
 /** Flag to know if the App is "cold booting" or not. This value is passed to the web App. */
 BOOL IS_COLD_BOOT = YES;
 
-@interface CloneMessageHandler : NSObject<WKScriptMessageHandler>
+@interface CloneMessageHandler : NSObject<WKScriptMessageHandlerWithReply>
 
 @property (nonatomic, weak, readonly) CDVViewController* viewController;
 
@@ -48,11 +48,11 @@ BOOL IS_COLD_BOOT = YES;
 
 @end
 
-@interface WebViewWeakScriptMessageHandler : NSObject <WKScriptMessageHandler>
+@interface WebViewWeakScriptMessageHandler : NSObject <WKScriptMessageHandlerWithReply>
 
-@property (nonatomic, weak, readonly) id<WKScriptMessageHandler>scriptMessageHandler;
+@property (nonatomic, weak, readonly) id<WKScriptMessageHandlerWithReply>scriptMessageHandler;
 
-- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandler>)scriptMessageHandler;
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler;
 
 @end
 
@@ -554,7 +554,7 @@ BOOL IS_COLD_BOOT = YES;
         
         self.cloneMessageHandler = [[CloneMessageHandler alloc] initWithViewController:self.cloneParent];
         WebViewWeakScriptMessageHandler *weakScriptMessageHandler = [[WebViewWeakScriptMessageHandler alloc] initWithScriptMessageHandler:self.cloneMessageHandler];
-        [cloneWebView.configuration.userContentController addScriptMessageHandler:weakScriptMessageHandler name:@"webViewParent"];
+        [cloneWebView.configuration.userContentController addScriptMessageHandlerWithReply:weakScriptMessageHandler contentWorld:WKContentWorld.pageWorld name:@"webViewParent"];
     }
 
     [self.view addSubview:view];
@@ -966,8 +966,7 @@ BOOL IS_COLD_BOOT = YES;
     return self;
 }
 
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
-    
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
     if (![message.name isEqualToString:@"webViewParent"]) return;
     if (![message.body isKindOfClass:[NSDictionary class]]) return;
     
@@ -978,11 +977,24 @@ BOOL IS_COLD_BOOT = YES;
             self.viewController.showWebViewCloneCompletionHandler(true);
         }
         self.viewController.showWebViewCloneCompletionHandler = nil;
+        if (replyHandler) {
+            replyHandler(@"OK", nil);
+        }
     } else if ([body[@"title"] isEqualToString:@"TRAINING_TASK_FINISHED"]) {
         if (self.viewController.loadTaskInWebViewCloneCompletionHandler != nil) {
             self.viewController.loadTaskInWebViewCloneCompletionHandler(body);
         }
         self.viewController.loadTaskInWebViewCloneCompletionHandler = nil;
+        if (replyHandler) {
+            replyHandler(@"OK", nil);
+        }
+    } else if ([body[@"title"] isEqualToString:@"CALL_ASYNC"] && [body[@"script"] isKindOfClass:[NSString class]]) {
+        WKWebView *webView = (WKWebView *) self.viewController.webView;
+        [webView callAsyncJavaScript:body[@"script"] arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld  completionHandler:^(id  _Nullable_result result, NSError * _Nullable error) {
+            if (replyHandler) {
+                replyHandler(result, [error description]);
+            }
+        }];
     }
 }
 
@@ -992,7 +1004,7 @@ BOOL IS_COLD_BOOT = YES;
 
 @implementation WebViewWeakScriptMessageHandler
 
-- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandler>)scriptMessageHandler
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler
 {
     self = [super init];
     if (self) {
@@ -1001,9 +1013,8 @@ BOOL IS_COLD_BOOT = YES;
     return self;
 }
 
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message
-{
-    [self.scriptMessageHandler userContentController:userContentController didReceiveScriptMessage:message];
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    [self.scriptMessageHandler userContentController:userContentController didReceiveScriptMessage:message replyHandler:replyHandler];
 }
 
 @end
