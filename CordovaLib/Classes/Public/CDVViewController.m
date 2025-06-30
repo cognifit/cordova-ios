@@ -878,7 +878,7 @@ BOOL IS_COLD_BOOT = YES;
         [subview removeFromSuperview];
     }
 
-    [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
+    if (![backgroundStyle isEqual: @"nil"]) [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
 
     self.loadCounter = 0;
     self.webViewEngine = nil;
