@@ -471,6 +471,18 @@ BOOL IS_COLD_BOOT = YES;
         }
     }
     
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wundeclared-selector"
+  
+    SEL selector = @selector(overrideWwwFolderName:);
+    if ([self.cloneParent.webViewEngine respondsToSelector:@selector(basePath)] && [customWebViewEngineClass respondsToSelector:selector] && self.isClone) {
+        NSString *parentBasePath = [self.cloneParent.webViewEngine performSelector:@selector(basePath)];
+        NSString *folderName = [parentBasePath lastPathComponent];
+        [customWebViewEngineClass performSelector:selector withObject:folderName];
+    }
+    
+    #pragma clang diagnostic pop
+    
     // Otherwise use the default web view engine
     if (!engine) {
         Class defaultWebViewEngineClass = NSClassFromString(defaultWebViewEngineClassName);
