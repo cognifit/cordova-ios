@@ -1,24 +1,24 @@
 /*
- Licensed to the Apache Software Foundation (ASF) under one
- or more contributor license agreements.  See the NOTICE file
- distributed with this work for additional information
- regarding copyright ownership.  The ASF licenses this file
- to you under the Apache License, Version 2.0 (the
- "License"); you may not use this file except in compliance
- with the License.  You may obtain a copy of the License at
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+        http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing,
- software distributed under the License is distributed on an
- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- KIND, either express or implied.  See the License for the
- specific language governing permissions and limitations
- under the License.
- */
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+*/
 
 #import "CDVIntentAndNavigationFilter.h"
-#import <Cordova/CDV.h>
+#import <Cordova/CDVConfigParser.h>
 
 @interface CDVIntentAndNavigationFilter ()
 
@@ -74,9 +74,7 @@
 
 - (void)pluginInitialize
 {
-    if ([self.viewController isKindOfClass:[CDVViewController class]]) {
-        [(CDVViewController*)self.viewController parseSettingsWithParser:self];
-    }
+    [CDVConfigParser parseConfigFile:self.viewController.configFilePath withDelegate:self];
 }
 
 + (CDVIntentAndNavigationFilterValue) filterUrl:(NSURL*)url allowIntentsList:(CDVAllowList*)allowIntentsList navigationsAllowList:(CDVAllowList*)navigationsAllowList
@@ -145,9 +143,24 @@
     }
 }
 
-- (BOOL)shouldOverrideLoadWithRequest:(NSURLRequest*)request navigationType:(CDVWebViewNavigationType)navigationType
+- (BOOL)shouldOverrideLoadWithRequest:(NSURLRequest*)request navigationType:(CDVWebViewNavigationType)navigationType info:(NSDictionary *)navInfo
 {
     return [[self class] shouldOverrideLoadWithRequest:request navigationType:navigationType filterValue:[self filterUrl:request.URL]];
 }
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-implementations"
+// TODO: Remove in Cordova iOS 9
+// The Ionic Webview plugin calls this method by selector (rather than
+// shouldOverrideLoadWithRequest:navigationType:info: as defined above) and
+// apps using that plugin break by refusing to load content unless this
+// deprecated selector exists.
+- (BOOL)shouldOverrideLoadWithRequest:(NSURLRequest*)request navigationType:(CDVWebViewNavigationType)navigationType
+{
+    NSLog(@"Plugin called shouldOverrideLoadWithRequest:navigationType: which is deprecated and will be removed in Cordova iOS 9");
+
+    return [[self class] shouldOverrideLoadWithRequest:request navigationType:navigationType filterValue:[self filterUrl:request.URL]];
+}
+#pragma clang diagnostic pop
 
 @end

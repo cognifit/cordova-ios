@@ -1,21 +1,21 @@
 /*
- Licensed to the Apache Software Foundation (ASF) under one
- or more contributor license agreements.  See the NOTICE file
- distributed with this work for additional information
- regarding copyright ownership.  The ASF licenses this file
- to you under the Apache License, Version 2.0 (the
- "License"); you may not use this file except in compliance
- with the License.  You may obtain a copy of the License at
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+        http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing,
- software distributed under the License is distributed on an
- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- KIND, either express or implied.  See the License for the
- specific language governing permissions and limitations
- under the License.
- */
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+*/
 
 #import <Cordova/CDVAvailabilityDeprecated.h>
 
@@ -82,6 +82,9 @@
 #define __CORDOVA_7_0_0 70000
 #define __CORDOVA_7_0_1 70001
 #define __CORDOVA_7_1_0 70100
+#define __CORDOVA_7_1_1 70101
+#define __CORDOVA_8_0_0 80000
+#define __CORDOVA_8_0_1 80001
 /* coho:next-version,insert-before */
 #define __CORDOVA_NA 99999      /* not available */
 
@@ -94,10 +97,11 @@
  */
 #ifndef CORDOVA_VERSION_MIN_REQUIRED
     /* coho:next-version-min-required,replace-after */
-    #define CORDOVA_VERSION_MIN_REQUIRED __CORDOVA_7_1_0
+    #define CORDOVA_VERSION_MIN_REQUIRED __CORDOVA_8_0_1
 #endif
 
-/*
+// TODO: Remove in Cordova iOS 9
+/**
  Returns YES if it is at least version specified as NSString(X)
  Usage:
      if (IsAtLeastiOSVersion(@"5.1")) {
@@ -105,8 +109,9 @@
      }
  */
 #define IsAtLeastiOSVersion(X) ([[[UIDevice currentDevice] systemVersion] compare:X options:NSNumericSearch] != NSOrderedAscending)
+#pragma clang deprecated(IsAtLeastiOSVersion, "Use the built-in #available syntax")
 
-/* Return the string version of the decimal version */
+/** Return the string version of the decimal version */
 #define CDV_VERSION [NSString stringWithFormat:@"%d.%d.%d", \
     (CORDOVA_VERSION_MIN_REQUIRED / 10000),                 \
     (CORDOVA_VERSION_MIN_REQUIRED % 10000) / 100,           \

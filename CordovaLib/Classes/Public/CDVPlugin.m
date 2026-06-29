@@ -1,27 +1,26 @@
 /*
- Licensed to the Apache Software Foundation (ASF) under one
- or more contributor license agreements.  See the NOTICE file
- distributed with this work for additional information
- regarding copyright ownership.  The ASF licenses this file
- to you under the Apache License, Version 2.0 (the
- "License"); you may not use this file except in compliance
- with the License.  You may obtain a copy of the License at
+    Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
 
- http://www.apache.org/licenses/LICENSE-2.0
+        http://www.apache.org/licenses/LICENSE-2.0
 
- Unless required by applicable law or agreed to in writing,
- software distributed under the License is distributed on an
- "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
- KIND, either express or implied.  See the License for the
- specific language governing permissions and limitations
- under the License.
- */
+    Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+*/
 
 #import <Cordova/CDVPlugin.h>
-#import "CDVPlugin+Private.h"
 #import <Cordova/CDVPlugin+Resources.h>
+#import "CDVPlugin+Private.h"
 #import <Cordova/CDVViewController.h>
-#include <objc/message.h>
 
 @implementation UIView (org_apache_cordova_UIView_Extension)
 
@@ -29,28 +28,32 @@
 
 - (UIScrollView*)scrollView
 {
-    SEL scrollViewSelector = NSSelectorFromString(@"scrollView");
+    static UIView *caller = nil;
 
-    if ([self respondsToSelector:scrollViewSelector]) {
-        return ((id (*)(id, SEL))objc_msgSend)(self, scrollViewSelector);
+    if (caller != self && [self respondsToSelector:@selector(scrollView)]) {
+        caller = self;
+        UIScrollView *sv = [self performSelector:@selector(scrollView)];
+        caller = nil;
+        return sv;
     }
-
+    caller = nil;
     return nil;
 }
 
 @end
 
-NSString* const CDVPageDidLoadNotification = @"CDVPageDidLoadNotification";
-NSString* const CDVPluginHandleOpenURLNotification = @"CDVPluginHandleOpenURLNotification";
-NSString* const CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification = @"CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification";
-NSString* const CDVPluginResetNotification = @"CDVPluginResetNotification";
-NSString* const CDVViewWillAppearNotification = @"CDVViewWillAppearNotification";
-NSString* const CDVViewDidAppearNotification = @"CDVViewDidAppearNotification";
-NSString* const CDVViewWillDisappearNotification = @"CDVViewWillDisappearNotification";
-NSString* const CDVViewDidDisappearNotification = @"CDVViewDidDisappearNotification";
-NSString* const CDVViewWillLayoutSubviewsNotification = @"CDVViewWillLayoutSubviewsNotification";
-NSString* const CDVViewDidLayoutSubviewsNotification = @"CDVViewDidLayoutSubviewsNotification";
-NSString* const CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitionToSizeNotification";
+const NSNotificationName CDVPageDidLoadNotification = @"CDVPageDidLoadNotification";
+const NSNotificationName CDVPluginHandleOpenURLNotification = @"CDVPluginHandleOpenURLNotification";
+const NSNotificationName CDVPluginContinueUserActivityNotification = @"CDVPluginContinueUserActivityNotification";
+const NSNotificationName CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification = @"CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification";
+const NSNotificationName CDVPluginResetNotification = @"CDVPluginResetNotification";
+const NSNotificationName CDVViewWillAppearNotification = @"CDVViewWillAppearNotification";
+const NSNotificationName CDVViewDidAppearNotification = @"CDVViewDidAppearNotification";
+const NSNotificationName CDVViewWillDisappearNotification = @"CDVViewWillDisappearNotification";
+const NSNotificationName CDVViewDidDisappearNotification = @"CDVViewDidDisappearNotification";
+const NSNotificationName CDVViewWillLayoutSubviewsNotification = @"CDVViewWillLayoutSubviewsNotification";
+const NSNotificationName CDVViewDidLayoutSubviewsNotification = @"CDVViewDidLayoutSubviewsNotification";
+const NSNotificationName CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitionToSizeNotification";
 
 @interface CDVPlugin ()
 
@@ -71,8 +74,12 @@ NSString* const CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitio
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onAppTerminate) name:UIApplicationWillTerminateNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onMemoryWarning) name:UIApplicationDidReceiveMemoryWarningNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleOpenURL:) name:CDVPluginHandleOpenURLNotification object:nil];
-        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleOpenURLWithApplicationSourceAndAnnotation:) name:CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification object:nil];
         [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(onReset) name:CDVPluginResetNotification object:theWebViewEngine.engineWebView];
+
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+        [[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(handleOpenURLWithApplicationSourceAndAnnotation:) name:CDVPluginHandleOpenURLWithAppSourceAndAnnotationNotification object:nil];
+#pragma clang diagnostic pop
 
         self.webViewEngine = theWebViewEngine;
     }
@@ -109,7 +116,7 @@ NSString* const CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitio
     commandDelegate = nil;
 }
 
-- (UIView*)webView
+- (UIView *)webView
 {
     if (self.webViewEngine != nil) {
         return self.webViewEngine.engineWebView;
@@ -127,7 +134,7 @@ NSString* const CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitio
 */
 
 /* NOTE: calls into JavaScript must not call or trigger any blocking UI, like alerts */
-- (void)handleOpenURL:(NSNotification*)notification
+- (void)handleOpenURL:(NSNotification *)notification
 {
     // override to handle urls sent to your app
     // register your url schemes in your App-Info.plist
@@ -142,7 +149,7 @@ NSString* const CDVViewWillTransitionToSizeNotification = @"CDVViewWillTransitio
 /*
     NOTE: calls into JavaScript must not call or trigger any blocking UI, like alerts
  */
-- (void)handleOpenURLWithApplicationSourceAndAnnotation: (NSNotification*)notification
+- (void)handleOpenURLWithApplicationSourceAndAnnotation:(NSNotification *)notification
 {
     
     // override to handle urls sent to your app

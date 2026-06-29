@@ -7,13 +7,13 @@
 # to you under the Apache License, Version 2.0 (the
 # "License"); you may not use this file except in compliance
 # with the License.  You may obtain a copy of the License at
-# 
-# http://www.apache.org/licenses/LICENSE-2.0
-# 
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
 # Unless required by applicable law or agreed to in writing,
 # software distributed under the License is distributed on an
 # "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
-#  KIND, either express or implied.  See the License for the
+# KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
 #
@@ -21,10 +21,12 @@
 
 # Cordova iOS
 
-[![NPM](https://nodei.co/npm/cordova-ios.png)](https://nodei.co/npm/cordova-ios/)
+[![npm - Latest](https://img.shields.io/npm/v/cordova-ios/latest?label=Latest%20Release%20(npm))](https://npmjs.com/package/cordova-ios)
 
-[![Node CI](https://github.com/apache/cordova-ios/workflows/Node%20CI/badge.svg?branch=master)](https://github.com/apache/cordova-ios/actions?query=branch%3Amaster)
-[![codecov.io](https://codecov.io/github/apache/cordova-ios/coverage.svg?branch=master)](https://codecov.io/github/apache/cordova-ios?branch=master)
+[![GitHub](https://img.shields.io/github/package-json/v/apache/cordova-ios?label=Development%20(Git))](https://github.com/apache/cordova-ios)
+[![GitHub - Node Workflow](https://github.com/apache/cordova-ios/actions/workflows/ci.yml/badge.svg?branch=master)](https://github.com/apache/cordova-ios/actions/workflows/ci.yml?query=branch%3Amaster)
+[![GitHub - Release Audit Workflow](https://github.com/apache/cordova-ios/actions/workflows/release-audit.yml/badge.svg?branch=master)](https://github.com/apache/cordova-ios/actions/workflows/release-audit.yml?query=branch%3Amaster)
+[![Code Coverage](https://codecov.io/github/apache/cordova-ios/coverage.svg?branch=master)](https://codecov.io/github/apache/cordova-ios?branch=master)
 
 Cordova iOS is an iOS application library that allows for Cordova-based projects to be built for the iOS Platform. Cordova based applications are, at the core, applications written with web technology: HTML, CSS and JavaScript.
 
@@ -32,18 +34,18 @@ Cordova iOS is an iOS application library that allows for Cordova-based projects
 
 ## Requirements
 
-* Xcode 11.x or greater. Download it at the [Apple Developer - Downloads](https://developer.apple.com/downloads) or the [Mac App Store](https://apps.apple.com/us/app/xcode/id497799835?mt=12).
+* iOS 13+
+* [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12)
 * [Node.js](https://nodejs.org)
+
+> [!TIP]
+> Refer to the official Apache Cordova documentation for details on the requirements and prerequisites for building Cordova-iOS applications. These resources outline the necessary tools, supported versions, and platform requirements:
+>
+> * [System Requirements](https://cordova.apache.org/docs/en/latest/guide/platforms/ios/index.html#requirements-and-support)
 
 ## Create a Cordova project
 
 Follow the instructions in the [**Create your first Cordova app**](https://cordova.apache.org/docs/en/latest/guide/cli/index.html) section of [Apache Cordova Docs](https://cordova.apache.org/docs/en/latest/)
-
-To use a **shared CordovaLib**, for example in development, link the appropriate cordova-ios platform folder path:
-
-```bash
-cordova platform add --link /path/to/cordova-ios
-```
 
 ## Updating a Cordova project
 
@@ -56,15 +58,10 @@ cordova platform add ios
 
 ## Debugging in Xcode
 
-Import project in Xcode through _File > Open_ and targeting `/path/to/your-cdv-project/platforms/ios/PROJECT_NAME.xcworkspace`.
-
-## How to Test Repo Development
-
-```bash
-npm install
-npm test
-```
+Import project in Xcode through _File > Open_ and targeting `/path/to/your-cdv-project/platforms/ios/App.xcworkspace`.
 
 ## Further reading
 
 * [Apache Cordova](https://cordova.apache.org/)
+* [Apache Cordova iOS Platform Guide](https://cordova.apache.org/docs/en/dev/guide/platforms/ios/index.html)
+* [Apache Cordova iOS API Documentation](https://apache.github.io/cordova-ios/)
