@@ -74,6 +74,7 @@ API_AVAILABLE(ios(14.0))
 @property (nonatomic, readwrite, strong) UIView *launchView;
 @property (nonatomic, readwrite, strong) UIView *statusBar;
 @property (nonatomic, readwrite, strong) UIView* backgroundView;
+@property (nonatomic, assign) BOOL loadingScreenForClone;
 
 @property (readwrite, assign) NSInteger loadCounter;
 
@@ -416,10 +417,6 @@ API_AVAILABLE(ios(14.0))
     }
 
     // /////////////////
-
-    if (!self.backgroundView) {
-        [self createBackgroundView];
-    }
 
     if ([self.startupPluginNames count] > 0) {
         [CDVTimer start:@"TotalPluginStartup"];
@@ -798,24 +795,6 @@ API_AVAILABLE(ios(14.0))
     }
 }
 
-- (void)createBackgroundView
-{
-    // we don't want to have to find out if there's a notch or not, we simply make the view bigger
-    CGRect viewBounds = self.view.bounds;
-    viewBounds.origin.x = -60;
-    viewBounds.origin.y = -60;
-    viewBounds.size.width += 120;
-    viewBounds.size.height += 120;
-
-    WKWebView* webView = [[WKWebView alloc] initWithFrame:viewBounds];
-    webView.hidden = YES;
-    webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
-
-    [self.view addSubview:webView];
-    [self.view sendSubviewToBack:webView];
-    self.backgroundView = webView;
-}
-
 - (void)createStatusBarView
 {
 #if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
@@ -972,28 +951,78 @@ API_AVAILABLE(ios(14.0))
             [self.webView becomeFirstResponder];
         }
     }];
-    if (!visible) self.backgroundView.hidden = YES;
+    if (!visible && !self.loadingScreenForClone) [self hideLoadingScreen];
 }
 
 // ///////////////////////
 
-- (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor {
+- (void)showLoadingScreenWithHTML:(NSString *)html baseURL:(NSURL *)baseURL
+{
     [self loadViewIfNeeded];
-    WKWebView* webView = (WKWebView*) self.backgroundView;
-    NSString *resource = [@"cordova-js-src/plugin/ios" stringByAppendingPathComponent:[backgroundStyle stringByAppendingPathExtension:@"html"]];
-    NSString* path = [self.commandDelegate pathForResource:resource];
-    if (!path) path = [NSBundle.mainBundle pathForResource:backgroundStyle ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
-    NSString* loadingScreenStyle1Html = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
-    if (!loadingScreenStyle1Html) return;
-    if (strokeColor != nil) {
-        NSString *defaultStrokeColor = [backgroundStyle isEqualToString:@"loadingScreenStyle1"] ? @"stroke: #007cd5;" : @"stroke: #3399ff;";
-        NSString *strokeColorStyle = [NSString stringWithFormat:@"stroke: %@;", strokeColor];
-        loadingScreenStyle1Html = [loadingScreenStyle1Html stringByReplacingOccurrencesOfString:defaultStrokeColor withString:strokeColorStyle];
+    [self hideLoadingScreen];
+    UIView *overlay = [[UIView alloc] initWithFrame:self.view.bounds];
+    overlay.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    overlay.backgroundColor = UIColor.systemBackgroundColor;
+    if (html != nil) {
+        WKWebViewConfiguration *configuration = [[WKWebViewConfiguration alloc] init];
+        configuration.websiteDataStore = WKWebsiteDataStore.nonPersistentDataStore;
+        WKWebView *webView = [[WKWebView alloc] initWithFrame:overlay.bounds configuration:configuration];
+        webView.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        webView.opaque = NO;
+        webView.backgroundColor = UIColor.clearColor;
+        webView.scrollView.scrollEnabled = NO;
+        [overlay addSubview:webView];
+        [webView loadHTMLString:html baseURL:baseURL];
+    } else {
+        UIActivityIndicatorView *spinner = [[UIActivityIndicatorView alloc] initWithActivityIndicatorStyle:UIActivityIndicatorViewStyleLarge];
+        spinner.center = CGPointMake(CGRectGetMidX(overlay.bounds), CGRectGetMidY(overlay.bounds));
+        spinner.autoresizingMask = UIViewAutoresizingFlexibleLeftMargin | UIViewAutoresizingFlexibleRightMargin | UIViewAutoresizingFlexibleTopMargin | UIViewAutoresizingFlexibleBottomMargin;
+        [overlay addSubview:spinner];
+        [spinner startAnimating];
     }
-    [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
+    self.backgroundView = overlay;
+    [self.view addSubview:overlay];
+}
 
-    [self.view bringSubviewToFront:self.backgroundView];
-    self.backgroundView.hidden = NO;
+- (void)hideLoadingScreen
+{
+    for (UIView *view in self.backgroundView.subviews) {
+        if ([view isKindOfClass:WKWebView.class]) [(WKWebView *)view stopLoading];
+    }
+    [self.backgroundView removeFromSuperview];
+    self.backgroundView = nil;
+    self.loadingScreenForClone = NO;
+}
+
+- (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor
+{
+    // Preserve app-supplied legacy resources; neither old style is required anymore.
+    NSString *resource = [@"cordova-js-src/plugin/ios" stringByAppendingPathComponent:[backgroundStyle stringByAppendingPathExtension:@"html"]];
+    NSString *path = [self.commandDelegate pathForResource:resource];
+    if (!path) path = [NSBundle.mainBundle pathForResource:backgroundStyle ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
+    NSString *html = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
+    if (html && strokeColor) {
+        NSString *oldStroke = [backgroundStyle isEqualToString:@"loadingScreenStyle1"] ? @"stroke: #007cd5;" : @"stroke: #3399ff;";
+        html = [html stringByReplacingOccurrencesOfString:oldStroke withString:[NSString stringWithFormat:@"stroke: %@;", strokeColor]];
+    }
+    [self showLoadingScreenWithHTML:html baseURL:path ? [NSURL fileURLWithPath:[path stringByDeletingLastPathComponent] isDirectory:YES] : nil];
+    if (!html && strokeColor) {
+        // Legacy apps normally pass a #RRGGBB stroke color.
+        NSString *hex = [strokeColor hasPrefix:@"#"] ? [strokeColor substringFromIndex:1] : strokeColor;
+        unsigned int rgb = 0;
+        NSScanner *scanner = [NSScanner scannerWithString:hex];
+        if (hex.length == 6 && [scanner scanHexInt:&rgb] && scanner.isAtEnd) {
+            UIActivityIndicatorView *spinner = (UIActivityIndicatorView *)self.backgroundView.subviews.firstObject;
+            spinner.color = [UIColor colorWithRed:((rgb >> 16) & 255) / 255.0 green:((rgb >> 8) & 255) / 255.0 blue:(rgb & 255) / 255.0 alpha:1];
+        }
+    }
+}
+
+- (void)reloadAppWithLoadingScreenHTML:(NSString *)html baseURL:(NSURL *)baseURL
+{
+    [self dismissWebViewClone];
+    [self showLoadingScreenWithHTML:html baseURL:baseURL];
+    [self recreateAppWebView];
 }
 
 - (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor
@@ -1003,9 +1032,14 @@ API_AVAILABLE(ios(14.0))
     if (backgroundStyle.length > 0 && ![backgroundStyle isEqualToString:@"nil"]) {
         [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
     } else {
-        self.backgroundView.hidden = YES;
+        [self hideLoadingScreen];
     }
 
+    [self recreateAppWebView];
+}
+
+- (void)recreateAppWebView
+{
     WKWebView *webView = (WKWebView *)self.webView;
     [webView stopLoading];
     [webView.configuration.userContentController removeAllUserScripts];
@@ -1052,6 +1086,15 @@ API_AVAILABLE(ios(14.0))
     return NO;
 }
 
+- (void)showWebViewCloneWithLoadingScreenHTML:(NSString *)html baseURL:(NSURL *)baseURL completionHandler:(VoidCompletionHandler)completionHandler
+{
+    if (self.clone && !self.clone.cloneReady) {
+        [self showLoadingScreenWithHTML:html baseURL:baseURL];
+        self.loadingScreenForClone = YES;
+    }
+    [self showWebViewClone:completionHandler];
+}
+
 - (void)showWebViewClone:(VoidCompletionHandler)completionHandler
 {
     if (!self.clone) {
@@ -1068,6 +1111,7 @@ API_AVAILABLE(ios(14.0))
         [self.clone didMoveToParentViewController:self];
     }
     if (self.clone.cloneReady) {
+        if (self.loadingScreenForClone) [self hideLoadingScreen];
         self.clone.view.hidden = NO;
         [self.view bringSubviewToFront:self.clone.view];
         self.showWebViewCloneCompletionHandler = nil;
@@ -1078,6 +1122,7 @@ API_AVAILABLE(ios(14.0))
 - (BOOL)hideWebViewClone
 {
     if (!self.clone) return NO;
+    if (self.loadingScreenForClone) [self hideLoadingScreen];
     self.clonePresentationRequested = NO;
     self.clone.viewIfLoaded.hidden = YES;
     self.showWebViewCloneCompletionHandler = nil;
@@ -1087,6 +1132,7 @@ API_AVAILABLE(ios(14.0))
 - (BOOL)dismissWebViewClone
 {
     if (!self.clone) return NO;
+    if (self.loadingScreenForClone) [self hideLoadingScreen];
     CDVViewController *clone = self.clone;
     [clone willMoveToParentViewController:nil];
     WKWebView *webView = (WKWebView *)clone.webView;
@@ -1162,6 +1208,7 @@ API_AVAILABLE(ios(14.0))
         VoidCompletionHandler completion = parent.showWebViewCloneCompletionHandler;
         parent.showWebViewCloneCompletionHandler = nil;
         if (parent.clonePresentationRequested) {
+            if (parent.loadingScreenForClone) [parent hideLoadingScreen];
             parent.clone.view.hidden = NO;
             [parent.view bringSubviewToFront:parent.clone.view];
             if (completion) completion(YES);

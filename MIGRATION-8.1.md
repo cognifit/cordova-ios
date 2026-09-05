@@ -130,23 +130,82 @@ Safari inspection is already supported upstream through `InspectableWebview`.
 
 ## Loading overlays
 
-The two original `loadingScreenStyle*.html` assets and stroke-color customization
-are retained under `cordova-js-src/plugin/ios`. As with the previous fork, arrange
-for the app build to copy these HTML assets to
-`www/cordova-js-src/plugin/ios/` (or the corresponding location under its custom
-root). They are not automatically installed by the JavaScript bundler and
-`cordova-js-src` is excluded from npm packaging. Lookup first uses the current
-controller's root, then falls back to bundled `www`. A missing HTML asset leaves
-the overlay unchanged rather than attempting to load a nil string.
+Loading screens are separate overlays; their HTML never replaces the main or
+cloned web app. There are no required loading-screen files in cordova-ios.
 
-Pass the legacy string `@"nil"` (or an empty string) to reload without an overlay.
-`showNativeBackgroundView:andStrokeColor:` and both style names are unchanged.
+Pass nil HTML for the built-in native spinner, which follows system light/dark
+appearance and requires no WebKit view or HTML parsing:
+
+```objc
+[controller showLoadingScreenWithHTML:nil baseURL:nil];
+[controller hideLoadingScreen];
+```
+
+The app can supply its own HTML, whether assembled in code or read from an
+app-owned file:
+
+```objc
+NSString *html = @"<!doctype html><html><head>"
+    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
+    "<style>body { background: #123; color: white; text-align: center; }</style>"
+    "</head><body>Preparing your session…</body></html>";
+[controller showLoadingScreenWithHTML:html baseURL:nil];
+```
+
+Custom HTML runs in a separate WKWebView created only when needed, with no
+Cordova plugins, Cordova bridge or clone bridge, and a nonpersistent website data
+store. The base URL resolves relative URLs; it does not grant arbitrary local
+file access. Prefer self-contained HTML/CSS and embedded images for predictable,
+fast rendering. Remote resources add latency and WebKit startup is still
+asynchronous. Until HTML paints, the overlay has a system background color.
+An empty HTML string is custom blank content; nil selects the native spinner.
+
+To reload the main app behind an overlay:
+
+```objc
+[controller reloadAppWithLoadingScreenHTML:html baseURL:nil];
+// Or use the native default:
+[controller reloadAppWithLoadingScreenHTML:nil baseURL:nil];
+```
+
+Reload overlays dismiss with the app's normal splash-screen dismissal
+(`AutoHideSplashScreen` / `SplashScreenDelay`). If auto-hide is disabled, call
+`hideLoadingScreen` or `showSplashScreen:NO` yourself.
+
+To show a loading screen while the clone starts, use:
+
+```objc
+[controller showWebViewCloneWithLoadingScreenHTML:cloneLoadingHTML
+                                         baseURL:nil
+                               completionHandler:^(BOOL ready) {
+    // Loading screen has been removed and the ready clone is visible.
+}];
+```
+
+This overlay belongs to the parent and covers it while the clone loads behind it.
+It is removed when the clone posts `UP_AND_RUNNING`, or if the clone is hidden or
+dismissed. Parent splash notifications cannot prematurely remove it. An
+already-ready clone is shown immediately without creating another overlay.
+The plain `showWebViewClone:` method still shows no loading overlay.
+
+Supply different HTML to the main reload method and clone show method to customize
+them independently. `hideLoadingScreen` removes the overlay and releases its
+WKWebView when one was created. Hidden controllers do not keep a spare loading
+webview. Call all these methods on the main thread.
+
+The legacy `showNativeBackgroundView:andStrokeColor:` and
+`reloadAppWithBackgroundStyle:andStrokeColor:` methods remain callable. They look
+for optional app-owned HTML in the old `cordova-js-src/plugin/ios` location under
+the content root, with bundled `www` as fallback. Otherwise they use the single
+native default instead of either old style. `#RRGGBB` stroke colors tint the native
+spinner; legacy HTML keeps the previous stroke substitution behavior. The string
+`@"nil"` or an empty style still reloads without any overlay.
 
 ## App verification
 
 Check both bundled and downloaded roots, relative and root-relative assets,
 first clone readiness, repeated hide/show/dismiss/recreate, parent async calls,
-task completion, reload with each overlay and without one, orientation/status-bar
+task completion, reload with custom HTML, the native spinner and without an overlay, orientation/status-bar
 behavior, native plugins in each controller, content-process recovery, and memory
 release after dismiss. Test stored login/data on an upgrade from the current app.
 The repository tests exercise the built-in engine, not the app's plugin inventory.
@@ -156,9 +215,10 @@ The repository tests exercise the built-in engine, not the app's plugin inventor
 Validated with Xcode 26.6 and an iPhone 17 Pro simulator (iOS 26.5):
 
 - Cordova framework simulator build succeeded.
-- All 11 selected native tests passed (view controller and URL scheme handler),
+- All 12 selected native tests passed (view controller and URL scheme handler),
   including real WKWebView roots/assets, clone message replies, task completion,
-  invalid-message rejection, switching, and reload.
+  invalid-message rejection, switching, reload, lazy native overlays, custom HTML
+  rendering/base URLs, and loading-screen dismissal.
 - `npm run lint` passed.
 - `npm run test:unit`: 325 specs, 0 failures, including generated-app builds.
 

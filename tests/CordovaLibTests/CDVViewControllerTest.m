@@ -19,6 +19,7 @@
 
 #import <XCTest/XCTest.h>
 #import <WebKit/WebKit.h>
+#import "CDVTestHelpers.h"
 #import <Cordova/CDVViewController.h>
 #import <Cordova/CDVPluginNotifications.h>
 
@@ -99,6 +100,56 @@
     XCTAssertTrue([viewController checkAndReinitViewUrl]);
 }
 
+- (void)testLoadingScreenIsLazyAndCustomHTMLUsesSeparateWebView
+{
+    CDVViewController *controller = [self viewController];
+    XCTestExpectation *appLoaded = [self expectationForNotification:CDVPageDidLoadNotification object:nil handler:^BOOL(NSNotification *note) {
+        return note.object == controller.webView;
+    }];
+    [controller loadViewIfNeeded];
+    [self waitForExpectations:@[appLoaded] timeout:15];
+    XCTAssertNil([controller valueForKey:@"backgroundView"]);
+    UIView *appWebView = controller.webView;
+    NSNumber *loadCount = [controller valueForKey:@"loadCounter"];
+
+    [controller showLoadingScreenWithHTML:nil baseURL:nil];
+    UIView *nativeOverlay = [controller valueForKey:@"backgroundView"];
+    XCTAssertTrue([nativeOverlay.subviews.firstObject isKindOfClass:UIActivityIndicatorView.class]);
+    XCTAssertEqual(controller.webView, appWebView);
+    [controller hideLoadingScreen];
+    XCTAssertNil(nativeOverlay.superview);
+
+    [controller showLoadingScreenWithHTML:@"<!doctype html><title>App loading screen</title><body>Loading</body>" baseURL:[NSURL URLWithString:@"https://assets.example/brand/"]];
+    UIView *htmlOverlay = [controller valueForKey:@"backgroundView"];
+    WKWebView *loadingWebView = (WKWebView *)htmlOverlay.subviews.firstObject;
+    XCTAssertTrue([loadingWebView isKindOfClass:WKWebView.class]);
+    XCTAssertNotEqual(loadingWebView, appWebView);
+    XCTAssertFalse(loadingWebView.configuration.websiteDataStore.isPersistent);
+    XCTAssertEqual(loadingWebView.configuration.userContentController.userScripts.count, 0u);
+    TestNavigationDelegate *delegate = [[TestNavigationDelegate alloc] init];
+    XCTestExpectation *htmlLoaded = [self expectationWithDescription:@"custom loading HTML rendered"];
+    [delegate waitForDidFinishNavigation:htmlLoaded];
+    loadingWebView.navigationDelegate = delegate;
+    [self waitForExpectations:@[htmlLoaded] timeout:15];
+    XCTestExpectation *contents = [self expectationWithDescription:@"custom overlay content and base URL"];
+    [loadingWebView evaluateJavaScript:@"[document.title, new URL('logo.svg', document.baseURI).href, typeof cordova]" completionHandler:^(id result, NSError *error) {
+        XCTAssertNil(error);
+        XCTAssertEqualObjects(result, (@[@"App loading screen", @"https://assets.example/brand/logo.svg", @"undefined"]));
+        [contents fulfill];
+    }];
+    [self waitForExpectations:@[contents] timeout:10];
+    XCTAssertEqualObjects([controller valueForKey:@"loadCounter"], loadCount);
+    [controller hideLoadingScreen];
+    XCTAssertNil([controller valueForKey:@"backgroundView"]);
+    XCTAssertNil(htmlOverlay.superview);
+
+    // Legacy names now work without copying either old HTML resource into the app.
+    [controller showNativeBackgroundView:@"loadingScreenStyle1" andStrokeColor:@"#007cd5"];
+    UIView *legacyOverlay = [controller valueForKey:@"backgroundView"];
+    XCTAssertTrue([legacyOverlay.subviews.firstObject isKindOfClass:UIActivityIndicatorView.class]);
+    [controller hideLoadingScreen];
+}
+
 - (void)testCloneInheritsRootWithoutLoadingAndCanBeRecreated
 {
     if (@available(iOS 14.0, *)) {
@@ -150,11 +201,15 @@
         // Exercise file URLs as well as absolute paths, including spaces in both roots.
         XCTAssertTrue([parent createWebViewCloneWithWebContentFolderName:[NSURL fileURLWithPath:cloneRoot isDirectory:YES].absoluteString startPage:@"index.html?root=clone"]);
         XCTestExpectation *ready = [self expectationWithDescription:@"clone bridge ready"];
-        [parent showWebViewClone:^(BOOL success) {
+        [parent showWebViewCloneWithLoadingScreenHTML:@"<html><body>Preparing training</body></html>" baseURL:nil completionHandler:^(BOOL success) {
             XCTAssertTrue(success);
             [ready fulfill];
         }];
+        XCTAssertNotNil([parent valueForKey:@"backgroundView"]);
+        [parent showSplashScreen:NO];
+        XCTAssertNotNil([parent valueForKey:@"backgroundView"]);
         [self waitForExpectations:@[ready] timeout:15];
+        XCTAssertNil([parent valueForKey:@"backgroundView"]);
         CDVViewController *clone = (CDVViewController *)parent.childViewControllers.firstObject;
         XCTAssertEqualObjects([parent valueForKey:@"loadCounter"], parentLoadCount);
 
@@ -207,9 +262,11 @@
         XCTestExpectation *reloaded = [self expectationForNotification:CDVPageDidLoadNotification object:nil handler:^BOOL(NSNotification *note) {
             return note.object == parent.webView;
         }];
-        [parent reloadAppWithBackgroundStyle:@"nil" andStrokeColor:nil];
+        [parent reloadAppWithLoadingScreenHTML:nil baseURL:nil];
+        XCTAssertNotNil([parent valueForKey:@"backgroundView"]);
         [self waitForExpectations:@[reloaded] timeout:15];
         XCTAssertNotEqual(parent.webView, oldWebView);
+        XCTAssertNil([parent valueForKey:@"backgroundView"]);
         XCTAssertEqualObjects(parent.webContentFolderName, mainRoot);
         XCTAssertEqualObjects([parent valueForKey:@"loadCounter"], @1);
         XCTAssertTrue([manager removeItemAtPath:directory error:nil]);

@@ -321,6 +321,21 @@ NS_ASSUME_NONNULL_BEGIN
 typedef void (^_Nullable VoidCompletionHandler)(BOOL);
 typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 
+/** Shows app-provided HTML in a separate WKWebView overlay, or a native spinner when html is nil.
+ The overlay has no Cordova bridge. Prefer self-contained HTML for fast rendering.
+ baseURL is used to resolve relative URLs in the supplied HTML. Call on the main thread.
+ */
+- (void)showLoadingScreenWithHTML:(nullable NSString *)html baseURL:(nullable NSURL *)baseURL;
+/** Removes the overlay and releases its WebKit view, if any. */
+- (void)hideLoadingScreen;
+/** Recreates the app webview behind the overlay. AutoHideSplashScreen controls automatic dismissal. */
+- (void)reloadAppWithLoadingScreenHTML:(nullable NSString *)html baseURL:(nullable NSURL *)baseURL;
+/** Shows an overlay over the parent until the clone announces UP_AND_RUNNING.
+ Passing nil HTML selects the native default. An already-ready clone appears immediately.
+ */
+- (void)showWebViewCloneWithLoadingScreenHTML:(nullable NSString *)html baseURL:(nullable NSURL *)baseURL completionHandler:(VoidCompletionHandler)completionHandler;
+
+/** Legacy entry points: optional app-owned style files are supported; otherwise use the native default. */
 - (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
 - (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
 
