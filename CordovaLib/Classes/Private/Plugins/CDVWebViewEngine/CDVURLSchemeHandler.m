@@ -19,6 +19,7 @@
 
 
 #import "CDVURLSchemeHandler.h"
+#import "CDVViewController+Private.h"
 #import <Cordova/CDVViewController.h>
 #import <Cordova/CDVPlugin.h>
 #import <Foundation/Foundation.h>
@@ -210,7 +211,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
 
 - (NSURL *)fileURLForRequestURL:(NSURL *)url
 {
-    NSURL *resDir = [[NSBundle mainBundle] URLForResource:self.viewController.webContentFolderName withExtension:nil];
+    NSURL *resDir = [self.viewController webContentURL];
     NSURL *filePath;
 
     if ([url.path hasPrefix:@"/_app_file_"]) {
@@ -218,7 +219,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
         filePath = [NSURL fileURLWithPath:path relativeToURL:resDir];
     } else {
         if ([url.path isEqualToString:@""] || [url.pathExtension isEqualToString:@""]) {
-            filePath = [resDir URLByAppendingPathComponent:self.viewController.startPage];
+            filePath = [resDir URLByAppendingPathComponent:[NSURL URLWithString:self.viewController.startPage].path];
         } else {
             filePath = [resDir URLByAppendingPathComponent:url.path];
         }

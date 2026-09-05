@@ -174,6 +174,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /**
  The folder path containing the web content to be displayed.
+ Set this before loading the view, or recreate the engine with
+ `reloadAppWithBackgroundStyle:andStrokeColor:` after changing it. Bundle-relative
+ folders, absolute directories and file directory URLs are supported by the built-in engine.
 
  The default value is `"www"`.
 
@@ -313,6 +316,25 @@ NS_ASSUME_NONNULL_BEGIN
  */
 - (void)showSplashScreen:(BOOL)visible;
 
+
+/** Completion handlers used by the clone bridge. */
+typedef void (^_Nullable VoidCompletionHandler)(BOOL);
+typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
+
+- (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
+- (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
+
+/** Creates a clone with a snapshot of this controller's root and start page. Requires iOS 14+. */
+- (BOOL)createWebViewClone;
+/** Creates an independently rooted clone. A nil start page uses config.xml. Returns NO if one already exists. */
+- (BOOL)createWebViewCloneWithWebContentFolderName:(NSString *)folderName startPage:(nullable NSString *)startPage;
+/** Shows the clone when its web app posts UP_AND_RUNNING; subsequent calls show it immediately. */
+- (void)showWebViewClone:(VoidCompletionHandler)completionHandler;
+/** Returns to the parent while keeping the clone alive. */
+- (BOOL)hideWebViewClone;
+/** Destroys the clone so its web content and plugins can be released. */
+- (BOOL)dismissWebViewClone;
+- (void)loadTaskInWebViewCloneWithJsCommand:(NSString *)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler;
 
 #pragma mark - Deprecated
 

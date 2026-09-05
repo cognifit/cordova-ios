@@ -29,10 +29,32 @@
 #import <Cordova/CDVSettingsDictionary.h>
 #import <Cordova/CDVTimer.h>
 #import "CDVCommandDelegateImpl.h"
+#import "CDVViewController+Private.h"
 
 static UIColor *defaultBackgroundColor(void) {
     return UIColor.systemBackgroundColor;
 }
+
+/** Flag to know if the App is "cold booting" or not. This value is passed to the web App. */
+static BOOL IS_COLD_BOOT = YES;
+
+API_AVAILABLE(ios(14.0))
+@interface CloneMessageHandler : NSObject<WKScriptMessageHandlerWithReply>
+
+@property (nonatomic, weak, readonly) CDVViewController* viewController;
+
+- (instancetype)initWithViewController:(CDVViewController*)viewController;
+
+@end
+
+API_AVAILABLE(ios(14.0))
+@interface WebViewWeakScriptMessageHandler : NSObject <WKScriptMessageHandlerWithReply>
+
+@property (nonatomic, weak, readonly) id<WKScriptMessageHandlerWithReply>scriptMessageHandler;
+
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler;
+
+@end
 
 @interface CDVViewController () <CDVWebViewEngineConfigurationDelegate, UIScrollViewDelegate> {
     id <CDVWebViewEngineProtocol> _webViewEngine;
@@ -51,6 +73,19 @@ static UIColor *defaultBackgroundColor(void) {
 @property (nonatomic, readwrite, strong) NSMutableArray* startupPluginNames;
 @property (nonatomic, readwrite, strong) UIView *launchView;
 @property (nonatomic, readwrite, strong) UIView *statusBar;
+@property (nonatomic, readwrite, strong) UIView* backgroundView;
+
+@property (readwrite, assign) NSInteger loadCounter;
+
+@property (nonatomic, readwrite, strong) CDVViewController* clone;
+@property (readwrite, assign) BOOL isClone;
+@property (readwrite, assign) BOOL cloneReady;
+@property (readwrite, assign) BOOL clonePresentationRequested;
+@property (nonatomic, readwrite, strong) id<WKScriptMessageHandlerWithReply> cloneMessageHandler;
+@property (nonatomic, readwrite, copy) VoidCompletionHandler showWebViewCloneCompletionHandler;
+@property (nonatomic, readwrite, copy) TaskCompletionHandler loadTaskInWebViewCloneCompletionHandler;
+@property (nonatomic, readwrite, weak) CDVViewController* cloneParent;
+
 @property (readwrite, assign) BOOL initialized;
 
 @end
@@ -246,13 +281,25 @@ static UIColor *defaultBackgroundColor(void) {
     return [NSURL fileURLWithPath:path];
 }
 
+- (NSURL *)webContentURL
+{
+    NSString *folder = self.webContentFolderName;
+    if ([folder hasPrefix:@"file://"]) {
+        return [NSURL URLWithString:folder].URLByStandardizingPath;
+    }
+    if (folder.isAbsolutePath) {
+        return [NSURL fileURLWithPath:folder isDirectory:YES].URLByStandardizingPath;
+    }
+    return [[NSBundle mainBundle] URLForResource:folder withExtension:nil];
+}
+
 - (NSURL *)appUrl
 {
     NSURL* appURL = nil;
 
     if ([self.startPage rangeOfString:@"://"].location != NSNotFound) {
         appURL = [NSURL URLWithString:self.startPage];
-    } else if ([self.webContentFolderName rangeOfString:@"://"].location != NSNotFound) {
+    } else if ([self.webContentFolderName rangeOfString:@"://"].location != NSNotFound && ![self.webContentFolderName hasPrefix:@"file://"]) {
         appURL = [NSURL URLWithString:[NSString stringWithFormat:@"%@/%@", self.webContentFolderName, self.startPage]];
     } else if([self.webContentFolderName rangeOfString:@".bundle"].location != NSNotFound){
         // www folder is actually a bundle
@@ -369,6 +416,10 @@ static UIColor *defaultBackgroundColor(void) {
     }
 
     // /////////////////
+
+    if (!self.backgroundView) {
+        [self createBackgroundView];
+    }
 
     if ([self.startupPluginNames count] > 0) {
         [CDVTimer start:@"TotalPluginStartup"];
@@ -552,6 +603,12 @@ static UIColor *defaultBackgroundColor(void) {
  */
 - (void)onWebViewPageDidLoad:(NSNotification*)notification
 {
+    if (notification.object != self.webView) {
+        return;
+    }
+    self.loadCounter += 1;
+    [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.ionicWebViewLoadCounter = %li; window.ionicIsColdBoot = %s;", (long)self.loadCounter, IS_COLD_BOOT ? "true" : "false"] completionHandler:nil];
+    IS_COLD_BOOT = NO;
     self.webView.hidden = NO;
 
     if ([self.webView respondsToSelector:@selector(scrollView)]) {
@@ -643,7 +700,7 @@ static UIColor *defaultBackgroundColor(void) {
             engine = customWebViewEngine;
         }
     }
-    
+
     // Otherwise use the default web view engine
     if (!engine) {
         Class defaultWebViewEngineClass = NSClassFromString(defaultWebViewEngineClassName);
@@ -652,7 +709,7 @@ static UIColor *defaultBackgroundColor(void) {
                  @"we expected the default web view engine to conform to the CDVWebViewEngineProtocol");
         engine = defaultWebViewEngine;
     }
-    
+
     if ([engine isKindOfClass:[CDVPlugin class]]) {
         [self registerPlugin:(CDVPlugin*)engine withClassName:webViewEngineClassName];
     }
@@ -720,6 +777,18 @@ static UIColor *defaultBackgroundColor(void) {
     view.hidden = YES;
     view.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
 
+    if (@available(iOS 14.0, *)) {
+        if (self.isClone) {
+            WKWebView* cloneWebView = (WKWebView*) view;
+            WKUserScript* script = [[WKUserScript alloc] initWithSource:@"window['__$cognifit$__isWebViewClone'] = true;" injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:true];
+            [cloneWebView.configuration.userContentController addUserScript:script];
+
+            self.cloneMessageHandler = [[CloneMessageHandler alloc] initWithViewController:self.cloneParent];
+            WebViewWeakScriptMessageHandler *weakScriptMessageHandler = [[WebViewWeakScriptMessageHandler alloc] initWithScriptMessageHandler:self.cloneMessageHandler];
+            [cloneWebView.configuration.userContentController addScriptMessageHandlerWithReply:weakScriptMessageHandler contentWorld:WKContentWorld.pageWorld name:@"webViewParent"];
+        }
+    }
+
     [self.view addSubview:view];
     [self.view sendSubviewToBack:view];
 
@@ -727,6 +796,24 @@ static UIColor *defaultBackgroundColor(void) {
         UIScrollView *scrollView = [self.webView performSelector:@selector(scrollView)];
         scrollView.delegate = self;
     }
+}
+
+- (void)createBackgroundView
+{
+    // we don't want to have to find out if there's a notch or not, we simply make the view bigger
+    CGRect viewBounds = self.view.bounds;
+    viewBounds.origin.x = -60;
+    viewBounds.origin.y = -60;
+    viewBounds.size.width += 120;
+    viewBounds.size.height += 120;
+
+    WKWebView* webView = [[WKWebView alloc] initWithFrame:viewBounds];
+    webView.hidden = YES;
+    webView.autoresizingMask = (UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight);
+
+    [self.view addSubview:webView];
+    [self.view sendSubviewToBack:webView];
+    self.backgroundView = webView;
 }
 
 - (void)createStatusBarView
@@ -885,6 +972,148 @@ static UIColor *defaultBackgroundColor(void) {
             [self.webView becomeFirstResponder];
         }
     }];
+    if (!visible) self.backgroundView.hidden = YES;
+}
+
+// ///////////////////////
+
+- (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor {
+    [self loadViewIfNeeded];
+    WKWebView* webView = (WKWebView*) self.backgroundView;
+    NSString *resource = [@"cordova-js-src/plugin/ios" stringByAppendingPathComponent:[backgroundStyle stringByAppendingPathExtension:@"html"]];
+    NSString* path = [self.commandDelegate pathForResource:resource];
+    if (!path) path = [NSBundle.mainBundle pathForResource:backgroundStyle ofType:@"html" inDirectory:@"www/cordova-js-src/plugin/ios"];
+    NSString* loadingScreenStyle1Html = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
+    if (!loadingScreenStyle1Html) return;
+    if (strokeColor != nil) {
+        NSString *defaultStrokeColor = [backgroundStyle isEqualToString:@"loadingScreenStyle1"] ? @"stroke: #007cd5;" : @"stroke: #3399ff;";
+        NSString *strokeColorStyle = [NSString stringWithFormat:@"stroke: %@;", strokeColor];
+        loadingScreenStyle1Html = [loadingScreenStyle1Html stringByReplacingOccurrencesOfString:defaultStrokeColor withString:strokeColorStyle];
+    }
+    [webView loadHTMLString:loadingScreenStyle1Html baseURL:nil];
+
+    [self.view bringSubviewToFront:self.backgroundView];
+    self.backgroundView.hidden = NO;
+}
+
+- (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor
+{
+    [self loadViewIfNeeded];
+    [self dismissWebViewClone];
+    if (backgroundStyle.length > 0 && ![backgroundStyle isEqualToString:@"nil"]) {
+        [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
+    } else {
+        self.backgroundView.hidden = YES;
+    }
+
+    WKWebView *webView = (WKWebView *)self.webView;
+    [webView stopLoading];
+    [webView.configuration.userContentController removeAllUserScripts];
+    if (@available(iOS 14.0, *)) {
+        [webView.configuration.userContentController removeAllScriptMessageHandlers];
+    }
+    [webView removeFromSuperview];
+    @synchronized(_pluginObjects) {
+        [[_pluginObjects allValues] makeObjectsPerformSelector:@selector(dispose)];
+        [_pluginObjects removeAllObjects];
+    }
+    [_commandQueue dispose];
+    _commandQueue = [[CDVCommandQueue alloc] initWithViewController:self];
+    _commandDelegate = [[CDVCommandDelegateImpl alloc] initWithViewController:self];
+    _webViewEngine = nil;
+    self.loadCounter = 0;
+    self.cloneReady = NO;
+    [self createGapView];
+    for (NSString *pluginName in self.startupPluginNames) {
+        [self getCommandInstance:pluginName];
+    }
+    [self.webView setBackgroundColor:self.backgroundColor];
+    [self loadStartPage];
+}
+
+- (BOOL)createWebViewClone
+{
+    return [self createWebViewCloneWithWebContentFolderName:self.webContentFolderName startPage:self.startPage];
+}
+
+- (BOOL)createWebViewCloneWithWebContentFolderName:(NSString *)folderName startPage:(NSString *)startPage
+{
+    if (@available(iOS 14.0, *)) {
+        if (self.clone != nil || self.isClone || folderName.length == 0) return NO;
+        self.clone = [[CDVViewController alloc] init];
+        self.clone.isClone = YES;
+        self.clone.cloneParent = self;
+        self.clone.configFile = self.configFile;
+        self.clone.webContentFolderName = folderName;
+        self.clone.startPage = startPage;
+        [self addChildViewController:self.clone];
+        return YES;
+    }
+    return NO;
+}
+
+- (void)showWebViewClone:(VoidCompletionHandler)completionHandler
+{
+    if (!self.clone) {
+        if (completionHandler) completionHandler(NO);
+        return;
+    }
+    self.clonePresentationRequested = YES;
+    self.showWebViewCloneCompletionHandler = completionHandler;
+    if (!self.clone.view.superview) {
+        self.clone.view.frame = self.view.bounds;
+        self.clone.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+        [self.view addSubview:self.clone.view];
+        [self.view sendSubviewToBack:self.clone.view];
+        [self.clone didMoveToParentViewController:self];
+    }
+    if (self.clone.cloneReady) {
+        self.clone.view.hidden = NO;
+        [self.view bringSubviewToFront:self.clone.view];
+        self.showWebViewCloneCompletionHandler = nil;
+        if (completionHandler) completionHandler(YES);
+    }
+}
+
+- (BOOL)hideWebViewClone
+{
+    if (!self.clone) return NO;
+    self.clonePresentationRequested = NO;
+    self.clone.viewIfLoaded.hidden = YES;
+    self.showWebViewCloneCompletionHandler = nil;
+    return YES;
+}
+
+- (BOOL)dismissWebViewClone
+{
+    if (!self.clone) return NO;
+    CDVViewController *clone = self.clone;
+    [clone willMoveToParentViewController:nil];
+    WKWebView *webView = (WKWebView *)clone.webView;
+    [webView stopLoading];
+    [webView.configuration.userContentController removeAllUserScripts];
+    if (@available(iOS 14.0, *)) {
+        [webView.configuration.userContentController removeAllScriptMessageHandlers];
+    }
+    clone.cloneMessageHandler = nil;
+    [clone.viewIfLoaded removeFromSuperview];
+    [clone removeFromParentViewController];
+    self.clone = nil;
+    self.clonePresentationRequested = NO;
+    self.showWebViewCloneCompletionHandler = nil;
+    self.loadTaskInWebViewCloneCompletionHandler = nil;
+    return YES;
+}
+
+- (void)loadTaskInWebViewCloneWithJsCommand:(NSString* _Nonnull)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler {
+    if (self.clone) {
+        self.loadTaskInWebViewCloneCompletionHandler = completionHandler;
+        [self.clone.webViewEngine evaluateJavaScript:jsCommand completionHandler:^(id result, NSError* error) {
+
+            // if we fail we don't care, we simply log for debugging
+            NSLog(@"loadTaskInWebViewCloneWithJsCommand result: %@, error? %@", result, error);
+        }];
+    }
 }
 
 - (void)showStatusBar:(BOOL)visible
@@ -898,6 +1127,83 @@ static UIColor *defaultBackgroundColor(void) {
 - (void)parseSettingsWithParser:(id <NSXMLParserDelegate>)delegate
 {
     [CDVConfigParser parseConfigFile:self.configFilePath withDelegate:delegate];
+}
+
+@end
+
+#pragma mark - CloneMessageHandler
+
+@implementation CloneMessageHandler
+
+- (instancetype)initWithViewController:(CDVViewController*)viewController {
+    self = [super init];
+    if (self) {
+        _viewController = viewController;
+    }
+    return self;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    CDVViewController *parent = self.viewController;
+    if (!parent || message.webView != parent.clone.webView) {
+        replyHandler(nil, @"The clone has been dismissed.");
+        return;
+    }
+    if (![message.name isEqualToString:@"webViewParent"] || ![message.body isKindOfClass:[NSDictionary class]]) {
+        replyHandler(nil, @"Invalid clone message.");
+        return;
+    }
+    NSDictionary *body = message.body;
+    NSString *title = body[@"title"];
+    if (![title isKindOfClass:[NSString class]]) {
+        replyHandler(nil, @"Missing clone message title.");
+    } else if ([title isEqualToString:@"UP_AND_RUNNING"]) {
+        parent.clone.cloneReady = YES;
+        VoidCompletionHandler completion = parent.showWebViewCloneCompletionHandler;
+        parent.showWebViewCloneCompletionHandler = nil;
+        if (parent.clonePresentationRequested) {
+            parent.clone.view.hidden = NO;
+            [parent.view bringSubviewToFront:parent.clone.view];
+            if (completion) completion(YES);
+        }
+        replyHandler(@"OK", nil);
+    } else if ([title isEqualToString:@"TRAINING_TASK_FINISHED"]) {
+        TaskCompletionHandler completion = parent.loadTaskInWebViewCloneCompletionHandler;
+        parent.loadTaskInWebViewCloneCompletionHandler = nil;
+        if (completion) completion(body);
+        replyHandler(@"OK", nil);
+    } else if ([title isEqualToString:@"CALL_ASYNC"] && [body[@"script"] isKindOfClass:[NSString class]]) {
+        WKWebView *webView = (WKWebView *)parent.webView;
+        [webView callAsyncJavaScript:body[@"script"] arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
+            replyHandler(result, error.localizedDescription);
+        }];
+    } else {
+        replyHandler(nil, @"Unknown clone message or invalid script.");
+    }
+}
+
+@end
+
+#pragma mark - WebViewWeakScriptMessageHandler
+
+@implementation WebViewWeakScriptMessageHandler
+
+- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler
+{
+    self = [super init];
+    if (self) {
+        _scriptMessageHandler = scriptMessageHandler;
+    }
+    return self;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
+    id<WKScriptMessageHandlerWithReply> handler = self.scriptMessageHandler;
+    if (handler) {
+        [handler userContentController:userContentController didReceiveScriptMessage:message replyHandler:replyHandler];
+    } else {
+        replyHandler(nil, @"The clone message handler has been released.");
+    }
 }
 
 @end

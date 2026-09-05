@@ -18,6 +18,7 @@
 */
 
 #import "CDVCommandDelegateImpl.h"
+#import "CDVViewController+Private.h"
 #import "CDVJSON_private.h"
 #import <Cordova/CDVCommandQueue.h>
 #import <Cordova/CDVPluginResult.h>
@@ -45,6 +46,10 @@
 
 - (NSString*)pathForResource:(NSString*)resourcepath
 {
+    if (_viewController.webContentFolderName.isAbsolutePath || [_viewController.webContentFolderName hasPrefix:@"file://"]) {
+        NSURL *url = [[_viewController webContentURL] URLByAppendingPathComponent:resourcepath];
+        return [[NSFileManager defaultManager] fileExistsAtPath:url.path] ? url.path : nil;
+    }
     NSBundle* mainBundle = [NSBundle mainBundle];
     NSMutableArray* directoryParts = [NSMutableArray arrayWithArray:[resourcepath componentsSeparatedByString:@"/"]];
     NSString* filename = [directoryParts lastObject];

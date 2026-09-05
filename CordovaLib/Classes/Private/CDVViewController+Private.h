@@ -19,10 +19,16 @@
 
 #import <Cordova/CDVViewController.h>
 
+NS_ASSUME_NONNULL_BEGIN
+
 @interface CDVViewController (Private)
+
+- (nullable NSURL *)webContentURL;
 
 - (void)setStatusBarWebViewColor:(UIColor *)color;
 
 - (void)showStatusBar:(BOOL)visible;
 
 @end
+
+NS_ASSUME_NONNULL_END
