@@ -3,6 +3,52 @@
 Base: Apache commit `f1011cf7a7a033539140d5678db15e1641607ae2` (8.1.1).
 Fork customizations ported from `6a0ad949278f8f4797211df82258f93cf8ba3ea9`.
 
+## Implementation status and agreed scope (2026-09-06)
+
+The initial migration and loading-overlay changes are implemented. The subsequent
+architecture discussion is not yet implemented in full. The examples below
+describe the current APIs, not the proposed plugin-free game host.
+
+| Capability | Current status |
+| --- | --- |
+| Main app with an independent content root and entry page | Implemented; reload replaces the engine and plugin instances. |
+| Independent clone root, show/hide/dismiss and legacy messaging | Implemented, but the clone is still a full CDVViewController with its own plugins. |
+| App-owned loading HTML and native spinner default | Implemented and tested; loading overlays themselves have no Cordova plugins. |
+| Session-only versus persistent main-app selection after cold boot | No dedicated API or persistence implemented. The app can currently configure the root before startup. |
+| Structured JSON handoff between replacement main apps | Not implemented. |
+| Lightweight game webview without plugin instances | Not implemented. |
+| Structured game messages and generic requests to the main app's plugin instances | Not implemented. CALL_ASYNC can invoke parent JavaScript, but is not the proposed structured dispatcher. |
+| Native lifecycle events for app-managed recovery | No dedicated game-termination event API. Current Cordova engine recovery automatically reloads a terminated content webview. |
+
+### Main app ownership
+
+Only one heavy main web app should be active at a time, with direct, full Cordova
+plugin access. It must be replaced rather than hosted as a clone. Recreating
+plugins can repeat native initialization. There is no universal way to make an
+arbitrary third-party plugin safe to recreate without cooperation from that
+plugin. The accepted approach is to keep replacement behavior and address any
+incompatible plugins individually, rather than redesign all native services now.
+
+### Game webviews and recovery responsibilities
+
+The intended game host owns no Cordova plugin instances. It communicates with the
+main app, which remains the sole Cordova/plugin owner. Destroying the host must
+release its webview, message handlers and pending requests.
+
+Recovery policy, checkpoints, game results, retry decisions and restoration of
+web-app state belong to the consuming app. The native host must expose lifecycle
+failures and clean up its bridge so that the app can implement those policies.
+JavaScript in a terminated webview cannot report its own termination. If both
+webviews terminate, the consuming app's native startup/recovery integration must
+restore enough of the main app to let its JavaScript resume control. An automatic
+game reload or automatic switch to another app is not a recovery policy this fork
+should impose.
+
+Releasing a WKWebView is a useful boundary for discarding heavy HTML/JavaScript
+content, but does not guarantee immediate reclamation of all WebKit, GPU or cache
+memory or survival of the other webview. WebKit controls its processes; separate
+process pools do not establish guaranteed process isolation on modern iOS.
+
 ## Native integration
 
 Use Cordova's built-in `CDVWebViewEngine`. Call the controller APIs on the main
