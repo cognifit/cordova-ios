@@ -1,274 +1,319 @@
 # CogniFit migration to Cordova iOS 8.1
 
-Base: Apache commit `f1011cf7a7a033539140d5678db15e1641607ae2` (8.1.1).
-Fork customizations ported from `6a0ad949278f8f4797211df82258f93cf8ba3ea9`.
+Base: Apache `f1011cf7a7a033539140d5678db15e1641607ae2` (8.1.1).
+Original fork: `6a0ad949278f8f4797211df82258f93cf8ba3ea9`.
+Branch: `codex/8.1-independent-webviews`.
 
-## Implementation status and agreed scope (2026-09-06)
+## Architecture and status
 
-The initial migration and loading-overlay changes are implemented. The subsequent
-architecture discussion is not yet implemented in full. The examples below
-describe the current APIs, not the proposed plugin-free game host.
+The main controller is the only Cordova/plugin owner. Switching main apps replaces
+its webview, command delegate/queue and plugin instances. An optional clone is a
+vanilla game WKWebView with no Cordova engine, plugin objects, plugin JavaScript,
+or Cordova startup. It talks to the main controller through `window.host`.
+There is no full-Cordova clone option or plugin compatibility registry.
 
-| Capability | Current status |
-| --- | --- |
-| Main app with an independent content root and entry page | Implemented; reload replaces the engine and plugin instances. |
-| Independent clone root, show/hide/dismiss and legacy messaging | Implemented, but the clone is still a full CDVViewController with its own plugins. |
-| App-owned loading HTML and native spinner default | Implemented and tested; loading overlays themselves have no Cordova plugins. |
-| Session-only versus persistent main-app selection after cold boot | No dedicated API or persistence implemented. The app can currently configure the root before startup. |
-| Structured JSON handoff between replacement main apps | Not implemented. |
-| Lightweight game webview without plugin instances | Not implemented. |
-| Structured game messages and generic requests to the main app's plugin instances | Not implemented. CALL_ASYNC can invoke parent JavaScript, but is not the proposed structured dispatcher. |
-| Native lifecycle events for app-managed recovery | No dedicated game-termination event API. Current Cordova engine recovery automatically reloads a terminated content webview. |
+Implemented: independent roots, main-app replacement, session/persistent app
+selection, JSON handoff, vanilla clones, loaded-plugin discovery, native plugin
+calls and repeated callbacks, bidirectional JSON messages, lifecycle hooks,
+app-owned loading HTML, and a native spinner default.
 
-### Main app ownership
+All native controller APIs must be called on the main thread. Use the built-in
+`CDVWebViewEngine` for the main app; remove the Ionic engine as described below.
 
-Only one heavy main web app should be active at a time, with direct, full Cordova
-plugin access. It must be replaced rather than hosted as a clone. Recreating
-plugins can repeat native initialization. There is no universal way to make an
-arbitrary third-party plugin safe to recreate without cooperation from that
-plugin. The accepted approach is to keep replacement behavior and address any
-incompatible plugins individually, rather than redesign all native services now.
+## Main app roots and replacement
 
-### Game webviews and recovery responsibilities
-
-The intended game host owns no Cordova plugin instances. It communicates with the
-main app, which remains the sole Cordova/plugin owner. Destroying the host must
-release its webview, message handlers and pending requests.
-
-Recovery policy, checkpoints, game results, retry decisions and restoration of
-web-app state belong to the consuming app. The native host must expose lifecycle
-failures and clean up its bridge so that the app can implement those policies.
-JavaScript in a terminated webview cannot report its own termination. If both
-webviews terminate, the consuming app's native startup/recovery integration must
-restore enough of the main app to let its JavaScript resume control. An automatic
-game reload or automatic switch to another app is not a recovery policy this fork
-should impose.
-
-Releasing a WKWebView is a useful boundary for discarding heavy HTML/JavaScript
-content, but does not guarantee immediate reclamation of all WebKit, GPU or cache
-memory or survival of the other webview. WebKit controls its processes; separate
-process pools do not establish guaranteed process isolation on modern iOS.
-
-## Native integration
-
-Use Cordova's built-in `CDVWebViewEngine`. Call the controller APIs on the main
-thread. Configure the main controller before its view is loaded:
+Before the main view loads, configure its root and entry page directly:
 
 ```objc
 controller.webContentFolderName = @"www-main";
 controller.startPage = @"index.html";
 ```
 
-`webContentFolderName` accepts a folder relative to the main bundle, an absolute
-filesystem directory, or a `file://` directory URL. This fork extends the built-in
-asset handler and resource lookup to support downloaded directories as well as
-bundled content. Include all required assets, Cordova JavaScript, and plugin
-JavaScript in each web app's root. Do not use an absolute `startPage` to select a
-local root: set the root separately and use a relative entry page.
+Roots can be main-bundle-relative directories, absolute directories, or `file://`
+directory URLs. Use a relative entry page for local apps, including an optional
+query and fragment. Each full main app needs its Cordova/plugin JavaScript and
+assets. Paths should be supplied by the consuming app, not inferred from another
+engine's global folder override.
+
+For multiple main apps, register IDs before the main view loads:
 
 ```objc
-BOOL created = [controller createWebViewCloneWithWebContentFolderName:downloadedAppDirectory
-                                                          startPage:@"index.html?mode=training"];
+NSError *error = nil;
+BOOL configured = [controller configureWebApps:@{
+    @"main": @{@"root": @"www-main", @"startPage": @"index.html"},
+    @"assessment": @{@"root": @"www-assessment", @"startPage": @"index.html"}
+} defaultAppID:@"main" error:&error];
+// Handle configured == NO before proceeding.
+```
+
+Registration selects the remembered ID if still registered, otherwise the default.
+It restores the selection before the initial view loads. Register all supported
+IDs on each cold boot; removed IDs fall back to the default. The app is responsible
+for ensuring registered directories and entry files exist.
+
+```objc
+BOOL accepted = [controller switchToWebApp:@"assessment"
+                                remember:YES
+                                 context:@{@"assessmentId": @123}
+                                   error:&error];
+// accepted means switching started; it does not mean the new app is ready.
+```
+
+This destroys any game clone, displays the native loading spinner, replaces the
+main webview and plugins, and injects this object at document start:
+
+```js
+window.cordovaWebApp // { appId: "assessment", context: { assessmentId: 123 } }
+```
+
+The JSON context is copied at the switch boundary and stays in native memory for
+this selection, including content-process reloads. It is not persisted across
+native process restarts. Arbitrary JavaScript/native object references are not
+supported. `activeWebAppID` and `webAppContext` expose the same state natively.
+
+`remember:NO` changes only the running session; the previous remembered selection
+is unchanged. `remember:YES` becomes persistent only when the new app signals
+successful startup through your native integration:
+
+```objc
+[controller confirmWebAppReady];
+```
+
+Confirmation saves the pending ID and hides the loading overlay. The package does
+not equate page-finished with business/application readiness. A failure before
+confirmation leaves the previous cold-boot selection intact. `clearRememberedWebApp`
+removes that selection without changing the running app. `webAppSelectionKey`
+defaults to `CDVMainWebApp`; set it before registration if the app needs a separate
+NSUserDefaults namespace. Only the ID is saved, not an absolute filesystem path.
+
+These switching/confirmation APIs are native. Expose them through your app's
+existing Cordova plugin if main-app JavaScript needs to initiate or confirm a
+switch; there is no injected `host` in the main app.
+
+The existing root-setter plus `reloadAppWithBackgroundStyle:andStrokeColor:` also
+remains available for unmanaged switching. Do not mix direct root mutation with
+registered app selection if you depend on `activeWebAppID`/handoff metadata.
+
+### Plugin lifecycle
+
+Plugins are disposed and reinitialized on a full main-app switch. Old command
+delegates are invalidated so queued results cannot target the replacement page.
+This does not stop arbitrary native work owned by third-party SDKs. There is no
+universal solution for plugins that cannot safely initialize more than once;
+review/fork incompatible plugins individually when encountered. Native state that
+must survive a switch remains the consuming app's responsibility.
+
+## Vanilla game clones
+
+```objc
+BOOL created = [controller createWebViewCloneWithWebContentFolderName:gameDirectory
+                                                          startPage:@"index.html?level=1"];
 if (created) {
-    [controller showWebViewClone:^(BOOL ready) {
-        // The clone has announced that it is ready and is now visible.
+    [controller showWebViewCloneWithLoadingScreenHTML:nil baseURL:nil
+                                  completionHandler:^(BOOL ready) {
+        // YES: game announced readiness; NO: startup failed/could not show.
     }];
 }
-
-// Return to the main app, retaining the clone's loaded state.
-[controller hideWebViewClone];
-// Show the same clone again without reloading it.
-[controller showWebViewClone:nil];
-// Or destroy it, including its controller and plugins.
-[controller dismissWebViewClone];
 ```
 
-`createWebViewClone` remains available and snapshots the parent's current root,
-start page and config-file path. The explicit creation method snapshots the supplied
-root/start page and the parent's config-file path. A nil start page uses that
-config's content entry. Creation returns NO if a clone already exists, if the root
-is empty, if called on a clone, or on iOS below 14 (the reply bridge needs iOS 14).
-Dismiss the existing clone before creating one with another root. The two roots
-are independent; changing the parent does not change an existing clone.
+`createWebViewClone` snapshots the parent's root and start page. The explicit
+method uses its supplied root; a nil entry page uses config.xml's content entry
+(or index.html). Only one clone can exist per main controller. Creation returns
+NO for an empty root, an existing clone, or iOS below 14. A successful create does
+not validate that the web app will load successfully.
 
-To change the main root after loading:
+Clones are private UIViewController instances, not CDVViewController instances.
+Do not cast child controllers to Cordova or use their plugin/engine APIs.
+They serve local content at `cdvgame://localhost` with a new nonpersistent website
+data store; main-app cookies and web storage are not shared, and game storage is
+not retained after destruction. Account for this origin in game CORS/CSP rules.
+Do not include cordova.js or plugin wrappers in the game's HTML.
+
+The main-frame `window.host` bridge is injected at document start. The game calls:
+
+```js
+await host.ready();
+```
+
+Readiness reveals the clone and removes its startup overlay. `hideWebViewClone`
+returns to the main view while retaining the game. `showWebViewClone:` shows a
+ready game immediately without reloading. `dismissWebViewClone` disconnects and
+releases the game, its handlers and outstanding result routes.
+
+### Plugin discovery and calls
+
+```js
+const plugins = await host.getLoadedPlugins();
+// [{ className: "SomeNativePlugin", services: ["someplugin"] }, ...]
+const result = await host.callPlugin("SomePlugin", "someAction", [arg1, arg2]);
+```
+
+Discovery reports only native instances currently held by the main controller,
+including internal plugins. `services` contains configured service names (usually
+normalized to lowercase); it can be empty for a class registered without a service.
+Installed but uninitialized plugins are not listed. A normal call may lazily
+initialize a registered plugin through Cordova's standard command dispatcher.
+
+Calls use the main controller's actual plugin objects. There is no per-game plugin
+instance, action allowlist, compatibility assertion, or JavaScript wrapper shim.
+Developers must use the plugin's native service/action/argument contract. A public
+plugin JavaScript method may transform arguments and thus differ from this API.
+Only trusted app/game content should receive this bridge.
+
+`callPlugin` resolves with the first successful callback value or rejects with a
+plugin error. A fourth argument overrides the default 30,000 ms timeout; use zero
+to disable it. For multiple results or multipart callback arguments, use:
+
+```js
+const unsubscribe = host.subscribePlugin(
+  "SomePlugin", "watch", [],
+  (...values) => { /* result callback arguments */ },
+  error => { /* plugin or bridge error */ }
+);
+unsubscribe();
+```
+
+Repeated callbacks follow Cordova's keepCallback flag. ArrayBuffer and multipart
+result envelopes are decoded. Unsubscribe/timeout stops result delivery, not the
+plugin's underlying native operation: invoke the plugin's documented stop method
+when required. The bridge has no plugin-specific cancellation knowledge.
+
+Session IDs and request IDs prevent results from a destroyed/navigated game from
+reaching its replacement. Closing a game drops its routes; its JavaScript runtime
+may already be gone and cannot be promised a final rejection callback.
+
+### Messages and lifecycle
+
+```js
+// In the game:
+await host.postMessage({ type: "gameFinished", score: 120 });
+host.onmessage = message => { /* message from main/native app */ };
+```
+
+Native main integration:
 
 ```objc
-controller.webContentFolderName = newAppDirectory;
-controller.startPage = @"index.html";
-[controller reloadAppWithBackgroundStyle:@"nil" andStrokeColor:nil];
+controller.cloneEventHandler = ^(NSDictionary *event) {
+    // type: "message", "loadFailed", or "terminated"; payload in "detail".
+};
+[controller postMessageToWebViewClone:@{@"type": @"pause"} completionHandler:nil];
 ```
 
-Reload recreates the engine, command queue/delegate and plugins, and dismisses any
-clone. It retains the controller's other views and does not manually re-enter
-`viewDidLoad`. Startup plugins are initialized again. This method also works on
-the clone controller, if accessed through the parent's child controllers.
+The main page also receives `cordovacloneevent` CustomEvents with the same object
+in `event.detail`. Sending to the game from main-page JavaScript can be exposed by
+your existing native plugin through `postMessageToWebViewClone:completionHandler:`.
 
-## Existing JavaScript bridge
+The game does not automatically reload, dismiss itself or select a fallback after
+content-process termination. Native event delivery lets the consuming app decide.
+For the main webview, upstream automatic recovery remains enabled by default:
 
-The clone still receives `window.__$cognifit$__isWebViewClone = true` at document
-start. After it is ready to display, its main document must send:
-
-```js
-await window.webkit.messageHandlers.webViewParent.postMessage({
-    title: 'UP_AND_RUNNING'
-});
+```objc
+controller.automaticWebViewRecoveryEnabled = NO;
+controller.webViewTerminationHandler = ^{
+    // App-owned recovery; JavaScript in the terminated main view cannot run.
+};
 ```
 
-This message is required on first load even if `showWebViewClone` has no completion
-block. Later hide/show calls reuse the ready clone without another handshake.
+Checkpoints, game results, retry policy and restoration belong to the consuming
+app. A native process restart requires the app's normal startup/restoration path.
+Destroying a WKWebView does not promise immediate reclamation of all WebKit/GPU
+memory or survival of another view. WebKit controls process allocation.
 
-`loadTaskInWebViewCloneWithJsCommand:withCompletionHandler:` and the
-`TRAINING_TASK_FINISHED` message are preserved. The task completion receives the
-message dictionary. `CALL_ASYNC` still executes an async JavaScript body in the
-parent and resolves/rejects the message's promise:
+### Legacy bridge compatibility
 
-```js
-const result = await window.webkit.messageHandlers.webViewParent.postMessage({
-    title: 'CALL_ASYNC',
-    script: 'return await someParentFunction();'
-});
-```
+`window.__$cognifit$__isWebViewClone` and `webViewParent` messages remain available:
+UP_AND_RUNNING aliases host.ready(); TRAINING_TASK_FINISHED delivers the legacy
+native task completion; CALL_ASYNC executes an async JavaScript body in the main
+webview and returns its result. `loadTaskInWebViewCloneWithJsCommand:withCompletionHandler:`
+also remains available. New games can use the simpler host API.
 
-Use this bridge only with your trusted web apps. An invalid message now rejects
-rather than leaving a promise unresolved.
-
-`window.ionicWebViewLoadCounter` and `window.ionicIsColdBoot` are preserved and set
-on each controller's own page-finished notification. The counter tracks completed
-loads since engine creation, including explicit navigations and content-process
-recovery; it is not exclusively a memory-pressure signal. Cold boot is a
-process-wide flag, as in the old fork. Root separation does not isolate cookies,
-localStorage, IndexedDB, or plugin global state: views with the same origin share
-the default website data store.
-
-## Removing cordova-plugin-ionic-webview from the app
-
-The plugin is not required by the new root/clone implementation. Its engine uses
-its own root handling, so remove it for this migration rather than expecting it to
-honor the built-in engine's independent roots. Audit the app's usages before
-removing the dependency and regenerate the iOS platform afterward.
-
-The plugin's default branch was inspected at `a0af9c3`; the app's lockfile may pin
-a different revision. The app and its custom plugins are outside this repository.
-
-| Existing usage | Migration |
-| --- | --- |
-| `CordovaWebViewEngine = CDVWKWebViewEngine` / `IonicWebView` feature | Remove plugin-injected configuration; use built-in `CDVWebViewEngine`. |
-| Engine class method `overrideWwwFolderName:` | Set the owning controller's `webContentFolderName` before loading. |
-| `Ionic.WebView.convertFileSrc(path)` | `window.WkWebView.convertFilePath(path)` after Cordova initialization. |
-| `window.WEBVIEW_SERVER_URL` | `window.CDV_ASSETS_URL`. |
-| `Ionic.WebView.setServerBasePath(...)` | Have the app's native plugin set its own controller's root and reload it. There is no automatic JS compatibility alias. |
-| `getServerBasePath` / `persistServerBasePath` | Implement app-owned root lookup/persistence; Cordova does not restore Ionic snapshot preferences automatically. |
-| `Ionic.StopScroll` / `IonicStopScroll` | Audit callers; no replacement is added by this migration. |
-| `iosScheme` | Set Cordova's `Scheme` preference; keep the existing `Hostname`. |
-
-For an app currently served from `ionic://localhost`, preserve that origin:
-
-```xml
-<preference name="Scheme" value="ionic" />
-<preference name="Hostname" value="localhost" />
-```
-
-Use the actual existing values if customized. Cordova defaults to `app://localhost`;
-changing origin changes the web storage namespace and can affect authentication,
-CORS and navigation rules. Verify an upgrade over an existing app installation.
-Safari inspection is already supported upstream through `InspectableWebview`.
+The main view retains `ionicWebViewLoadCounter` and `ionicIsColdBoot` on completed
+page loads. The counter includes explicit navigation and process recovery; it is
+not solely a memory-pressure signal. Vanilla games have no Cordova load counters.
 
 ## Loading overlays
 
-Loading screens are separate overlays; their HTML never replaces the main or
-cloned web app. There are no required loading-screen files in cordova-ios.
-
-Pass nil HTML for the built-in native spinner, which follows system light/dark
-appearance and requires no WebKit view or HTML parsing:
+No packaged loading HTML files are required. Nil HTML selects a native spinner
+that follows system light/dark appearance and creates no loading WKWebView:
 
 ```objc
 [controller showLoadingScreenWithHTML:nil baseURL:nil];
 [controller hideLoadingScreen];
 ```
 
-The app can supply its own HTML, whether assembled in code or read from an
-app-owned file:
+Pass app-owned HTML to render it in a separate, lazily created WKWebView with no
+Cordova/game bridge and a nonpersistent store:
 
 ```objc
-NSString *html = @"<!doctype html><html><head>"
-    "<meta name='viewport' content='width=device-width, initial-scale=1'>"
-    "<style>body { background: #123; color: white; text-align: center; }</style>"
-    "</head><body>Preparing your session…</body></html>";
-[controller showLoadingScreenWithHTML:html baseURL:nil];
+[controller showLoadingScreenWithHTML:@"<html><body>Preparing…</body></html>"
+                             baseURL:nil];
+[controller reloadAppWithLoadingScreenHTML:loadingHTML baseURL:nil];
 ```
 
-Custom HTML runs in a separate WKWebView created only when needed, with no
-Cordova plugins, Cordova bridge or clone bridge, and a nonpersistent website data
-store. The base URL resolves relative URLs; it does not grant arbitrary local
-file access. Prefer self-contained HTML/CSS and embedded images for predictable,
-fast rendering. Remote resources add latency and WebKit startup is still
-asynchronous. Until HTML paints, the overlay has a system background color.
-An empty HTML string is custom blank content; nil selects the native spinner.
+The HTML never replaces the game or main app. Prefer self-contained HTML/CSS and
+embedded images. baseURL resolves relative URLs but grants no arbitrary local-file
+access. WebKit startup is asynchronous; the overlay initially shows a system
+background. An empty string is blank custom content; nil selects the spinner.
 
-To reload the main app behind an overlay:
+Reload overlays follow AutoHideSplashScreen/SplashScreenDelay. Disable automatic
+splash dismissal if the app needs to retain an overlay until explicit readiness.
+Clone startup overlays stay until host.ready(), hide or dismissal; parent splash
+notifications cannot prematurely remove them. All loading views are released on
+hide. Plain showWebViewClone: creates no loading screen.
 
-```objc
-[controller reloadAppWithLoadingScreenHTML:html baseURL:nil];
-// Or use the native default:
-[controller reloadAppWithLoadingScreenHTML:nil baseURL:nil];
+Legacy style methods still try optional app-owned HTML in
+cordova-js-src/plugin/ios under the content root, then bundled www. Without a
+matching file they use the native default. #RRGGBB stroke colors tint that spinner.
+The legacy string @"nil" or an empty style reloads without an overlay.
+
+## Removing cordova-plugin-ionic-webview
+
+The plugin is not required. Its independent engine does not participate in this
+root/host implementation. Remove it and its engine configuration, audit usages,
+and regenerate the iOS platform. Its default branch was inspected at `a0af9c3`;
+your app's lockfile may pin another revision.
+
+| Existing usage | Replacement |
+| --- | --- |
+| CDVWKWebViewEngine / IonicWebView engine configuration | Built-in CDVWebViewEngine; remove plugin-injected configuration. |
+| overrideWwwFolderName: | Set the owning main controller's webContentFolderName before loading. |
+| Ionic.WebView.convertFileSrc(path) | window.WkWebView.convertFilePath(path) in the main Cordova page. |
+| window.WEBVIEW_SERVER_URL | window.CDV_ASSETS_URL in the main page. |
+| setServerBasePath | Native root switch/reload or registered switchToWebApp API. |
+| getServerBasePath / persistServerBasePath | App-owned lookup or registered selection APIs; Ionic snapshot preferences are not imported. |
+| Ionic.StopScroll / IonicStopScroll | Audit callers; no replacement included. |
+| iosScheme | Cordova Scheme, preserving the existing Hostname. |
+
+For an app previously served from ionic://localhost:
+
+```xml
+<preference name="Scheme" value="ionic" />
+<preference name="Hostname" value="localhost" />
 ```
 
-Reload overlays dismiss with the app's normal splash-screen dismissal
-(`AutoHideSplashScreen` / `SplashScreenDelay`). If auto-hide is disabled, call
-`hideLoadingScreen` or `showSplashScreen:NO` yourself.
+Preserve the actual existing values if customized. Changing the main origin can
+change storage namespaces, login state, CORS and navigation behavior. The game
+origin is intentionally separate. Safari inspection for the main view remains
+controlled by upstream InspectableWebview.
 
-To show a loading screen while the clone starts, use:
+## Validation and app integration
 
-```objc
-[controller showWebViewCloneWithLoadingScreenHTML:cloneLoadingHTML
-                                         baseURL:nil
-                               completionHandler:^(BOOL ready) {
-    // Loading screen has been removed and the ready clone is visible.
-}];
-```
+Validated on 2026-09-06 with Xcode 26.6 and iOS 26.5 (iPhone 17 Pro simulator):
 
-This overlay belongs to the parent and covers it while the clone loads behind it.
-It is removed when the clone posts `UP_AND_RUNNING`, or if the clone is hidden or
-dismissed. Parent splash notifications cannot prematurely remove it. An
-already-ready clone is shown immediately without creating another overlay.
-The plain `showWebViewClone:` method still shows no loading overlay.
+- All 14 selected native tests passed, with no compiler warnings in the final run.
+- npm run lint passed.
+- npm run test:unit passed: 325 specs, zero failures, including generated-app builds.
 
-Supply different HTML to the main reload method and clone show method to customize
-them independently. `hideLoadingScreen` removes the overlay and releases its
-WKWebView when one was created. Hidden controllers do not keep a spare loading
-webview. Call all these methods on the main thread.
+The full native suite and physical-device memory-pressure tests were not run.
 
-The legacy `showNativeBackgroundView:andStrokeColor:` and
-`reloadAppWithBackgroundStyle:andStrokeColor:` methods remain callable. They look
-for optional app-owned HTML in the old `cordova-js-src/plugin/ios` location under
-the content root, with bundled `www` as fallback. Otherwise they use the single
-native default instead of either old style. `#RRGGBB` stroke colors tint the native
-spinner; legacy HTML keeps the previous stroke substitution behavior. The string
-`@"nil"` or an empty style still reloads without any overlay.
 
-## App verification
+Native regression tests exercise real WKWebViews, separate game assets, no Cordova
+in games, single-instance plugin calls, streaming results, timeout cleanup,
+bidirectional messages, termination hooks, main-app replacement, JSON context and
+selection restoration using a fresh controller. They simulate termination by
+calling the delegate hook; they do not force an OS memory-pressure kill.
 
-Check both bundled and downloaded roots, relative and root-relative assets,
-first clone readiness, repeated hide/show/dismiss/recreate, parent async calls,
-task completion, reload with custom HTML, the native spinner and without an overlay, orientation/status-bar
-behavior, native plugins in each controller, content-process recovery, and memory
-release after dismiss. Test stored login/data on an upgrade from the current app.
-The repository tests exercise the built-in engine, not the app's plugin inventory.
-
-## Repository validation
-
-Validated with Xcode 26.6 and an iPhone 17 Pro simulator (iOS 26.5):
-
-- Cordova framework simulator build succeeded.
-- All 12 selected native tests passed (view controller and URL scheme handler),
-  including real WKWebView roots/assets, clone message replies, task completion,
-  invalid-message rejection, switching, reload, lazy native overlays, custom HTML
-  rendering/base URLs, and loading-screen dismissal.
-- `npm run lint` passed.
-- `npm run test:unit`: 325 specs, 0 failures, including generated-app builds.
-
-To repeat the native tests after `npm ci`:
+Run after npm ci:
 
 ```sh
 xcodebuild test -workspace tests/cordova-ios.xcworkspace \
@@ -277,6 +322,11 @@ xcodebuild test -workspace tests/cordova-ios.xcworkspace \
   -only-testing:CordovaTests/CDVViewControllerTest \
   -only-testing:CordovaTests/CDVURLSchemeHandlerTest \
   CODE_SIGNING_ALLOWED=NO
+npm run lint
+npm run test:unit
 ```
 
-The complete native test suite and a physical-device build were not run.
+The consuming app still needs its native/JS integration for switching, readiness
+confirmation and recovery, and must test its real plugin inventory. Exercise
+repeated heavy-app switching and game destruction on physical devices, background
+transitions, orientation, auth/storage on upgrade, and recovery after process loss.

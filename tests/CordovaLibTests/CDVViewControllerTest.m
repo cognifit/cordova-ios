@@ -20,8 +20,31 @@
 #import <XCTest/XCTest.h>
 #import <WebKit/WebKit.h>
 #import "CDVTestHelpers.h"
+#import "CDVGameViewController.h"
+#import "CDVViewController+Private.h"
+#import <Cordova/CDVPlugin.h>
+#import <Cordova/CDVPluginResult.h>
+#import <Cordova/CDVInvokedUrlCommand.h>
 #import <Cordova/CDVViewController.h>
 #import <Cordova/CDVPluginNotifications.h>
+
+@interface CDVHostTestPlugin : CDVPlugin
+@property (nonatomic, assign) NSInteger count;
+@property (nonatomic, copy) NSString *lateCallback;
+@end
+@implementation CDVHostTestPlugin
+- (void)echo:(CDVInvokedUrlCommand *)command {
+    self.count++;
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsDictionary:@{@"count": @(self.count), @"value": command.arguments.firstObject ?: NSNull.null}] callbackId:command.callbackId];
+}
+- (void)stream:(CDVInvokedUrlCommand *)command {
+    CDVPluginResult *first = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:1];
+    [first setKeepCallbackAsBool:YES];
+    [self.commandDelegate sendPluginResult:first callbackId:command.callbackId];
+    [self.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsInt:2] callbackId:command.callbackId];
+}
+- (void)delayed:(CDVInvokedUrlCommand *)command { self.lateCallback = command.callbackId; }
+@end
 
 #define CDVViewControllerTestSettingKey @"test_cdvconfigfile"
 #define CDVViewControllerTestSettingValueDefault @"config.xml"
@@ -158,10 +181,10 @@
         parent.startPage = @"home.html?source=parent";
         parent.configFile = @"config-custom.xml";
         XCTAssertTrue([parent createWebViewClone]);
-        CDVViewController *clone = (CDVViewController *)parent.childViewControllers.firstObject;
+        CDVGameViewController *clone = (CDVGameViewController *)parent.childViewControllers.firstObject;
         XCTAssertEqualObjects(clone.webContentFolderName, parent.webContentFolderName);
         XCTAssertEqualObjects(clone.startPage, parent.startPage);
-        XCTAssertEqualObjects(clone.configFile, parent.configFile);
+        XCTAssertFalse([clone isKindOfClass:CDVViewController.class]);
         parent.webContentFolderName = @"changed-www";
         XCTAssertEqualObjects(clone.webContentFolderName, @"alternate-www");
         XCTAssertFalse([parent createWebViewClone]);
@@ -184,7 +207,7 @@
             XCTAssertTrue([manager createDirectoryAtPath:root withIntermediateDirectories:YES attributes:nil error:nil]);
             NSString *html = @"<!doctype html><script src='identity.js'></script><body>Root test</body>";
             XCTAssertTrue([html writeToFile:[root stringByAppendingPathComponent:@"index.html"] atomically:YES encoding:NSUTF8StringEncoding error:nil]);
-            NSString *script = [root isEqualToString:mainRoot] ? @"window.identity = 'parent';" : @"window.identity = 'clone'; window.webkit.messageHandlers.webViewParent.postMessage({title:'UP_AND_RUNNING'});";
+            NSString *script = [root isEqualToString:mainRoot] ? @"window.identity = 'parent';" : @"window.identity = 'clone'; window.host.ready();";
             XCTAssertTrue([script writeToFile:[root stringByAppendingPathComponent:@"identity.js"] atomically:YES encoding:NSUTF8StringEncoding error:nil]);
         }
 
@@ -197,6 +220,9 @@
         [parent loadViewIfNeeded];
         [self waitForExpectations:@[loaded] timeout:15];
         NSNumber *parentLoadCount = [parent valueForKey:@"loadCounter"];
+        CDVHostTestPlugin *plugin = [[CDVHostTestPlugin alloc] init];
+        [parent registerPlugin:plugin withPluginName:@"HostTest"];
+        NSUInteger pluginCount = parent.enumerablePlugins.count;
 
         // Exercise file URLs as well as absolute paths, including spaces in both roots.
         XCTAssertTrue([parent createWebViewCloneWithWebContentFolderName:[NSURL fileURLWithPath:cloneRoot isDirectory:YES].absoluteString startPage:@"index.html?root=clone"]);
@@ -210,7 +236,7 @@
         XCTAssertNotNil([parent valueForKey:@"backgroundView"]);
         [self waitForExpectations:@[ready] timeout:15];
         XCTAssertNil([parent valueForKey:@"backgroundView"]);
-        CDVViewController *clone = (CDVViewController *)parent.childViewControllers.firstObject;
+        CDVGameViewController *clone = (CDVGameViewController *)parent.childViewControllers.firstObject;
         XCTAssertEqualObjects([parent valueForKey:@"loadCounter"], parentLoadCount);
 
         XCTestExpectation *parentIdentity = [self expectationWithDescription:@"parent asset"];
@@ -220,7 +246,7 @@
             [parentIdentity fulfill];
         }];
         XCTestExpectation *cloneIdentity = [self expectationWithDescription:@"clone asset"];
-        [clone.webViewEngine evaluateJavaScript:@"window.identity + ':' + window.__$cognifit$__isWebViewClone" completionHandler:^(id result, NSError *error) {
+        [clone.webView evaluateJavaScript:@"window.identity + ':' + window.__$cognifit$__isWebViewClone" completionHandler:^(id result, NSError *error) {
             XCTAssertNil(error);
             XCTAssertEqualObjects(result, @"clone:true");
             [cloneIdentity fulfill];
@@ -228,7 +254,7 @@
         [self waitForExpectations:@[parentIdentity, cloneIdentity] timeout:10];
         XCTAssertEqualObjects(parent.webViewEngine.URL.query, @"root=main");
         XCTAssertEqualObjects(parent.webViewEngine.URL.fragment, @"home");
-        XCTAssertEqualObjects(clone.webViewEngine.URL.query, @"root=clone");
+        XCTAssertEqualObjects(clone.webView.URL.query, @"root=clone");
         XCTestExpectation *asyncReply = [self expectationWithDescription:@"async parent bridge"];
         WKWebView *cloneWKWebView = (WKWebView *)clone.webView;
         [cloneWKWebView callAsyncJavaScript:@"return await window.webkit.messageHandlers.webViewParent.postMessage({title:'CALL_ASYNC', script:'return window.identity;'});" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
@@ -248,6 +274,35 @@
             [taskFinished fulfill];
         }];
         [self waitForExpectations:@[asyncReply, invalidReply, taskFinished] timeout:10];
+        XCTestExpectation *hostCalls = [self expectationWithDescription:@"vanilla host routes to main plugin instance"];
+        [clone.webView callAsyncJavaScript:@"const plugins = await host.getLoadedPlugins(); const a = await host.callPlugin('HostTest','echo',['one']); const b = await host.callPlugin('HostTest','echo',['two']); const stream = await new Promise((resolve,reject) => { const values=[]; host.subscribePlugin('HostTest','stream',[],value => { values.push(value); if(values.length===2) resolve(values); },reject); }); let invalid=false; try { await host.callPlugin('HostTest','missing',[]); } catch(e) { invalid=true; } let timedOut=false; try { await host.callPlugin('HostTest','delayed',[],20); } catch(e) { timedOut=e.code==='TIMEOUT'; } return [typeof cordova, plugins.some(p => p.className==='CDVHostTestPlugin'), a.count,b.count,stream,invalid,timedOut];" arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
+            XCTAssertNil(error);
+            XCTAssertEqualObjects(result, (@[@"undefined", @YES, @1, @2, @[@1,@2], @YES, @YES]));
+            [hostCalls fulfill];
+        }];
+        [self waitForExpectations:@[hostCalls] timeout:15];
+        XCTAssertEqual(plugin.count, 2);
+        XCTAssertEqual(parent.enumerablePlugins.count, pluginCount);
+        XCTAssertEqual(clone.requests.count, 0u);
+
+        XCTestExpectation *messageToMain = [self expectationWithDescription:@"game to main JSON"];
+        parent.cloneEventHandler = ^(NSDictionary *event) {
+            if ([event[@"type"] isEqual:@"message"]) {
+                XCTAssertEqualObjects(event[@"detail"], (@{@"score": @42}));
+                [messageToMain fulfill];
+            }
+        };
+        [clone.webView evaluateJavaScript:@"host.onmessage = value => host.postMessage(value);" completionHandler:nil];
+        [parent postMessageToWebViewClone:@{@"score": @42} completionHandler:nil];
+        [self waitForExpectations:@[messageToMain] timeout:10];
+        __block BOOL terminated = NO;
+        parent.cloneEventHandler = ^(NSDictionary *event) { terminated = [event[@"type"] isEqual:@"terminated"]; };
+        [clone webViewWebContentProcessDidTerminate:clone.webView];
+        XCTAssertTrue(terminated);
+        XCTAssertFalse(clone.cloneReady);
+        // The package reports termination without choosing a recovery action.
+        XCTAssertNotNil(clone.webView);
+        clone.cloneReady = YES;
         UIView *cloneWebView = clone.webView;
         XCTAssertTrue([parent hideWebViewClone]);
         XCTAssertTrue(clone.view.hidden);
@@ -256,6 +311,18 @@
         XCTAssertTrue(shownAgain);
         XCTAssertFalse(clone.view.hidden);
         XCTAssertEqual(clone.webView, cloneWebView);
+        XCTAssertTrue([parent dismissWebViewClone]);
+        XCTAssertNil(clone.webView);
+        XCTAssertTrue([parent createWebViewCloneWithWebContentFolderName:cloneRoot startPage:@"index.html"]);
+        CDVGameViewController *newClone = (CDVGameViewController *)parent.childViewControllers.firstObject;
+        newClone.requests[@"1"] = @NO;
+        [plugin.commandDelegate sendPluginResult:[CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsString:@"late"] callbackId:plugin.lateCallback];
+        XCTestExpectation *lateDrained = [self expectationWithDescription:@"late plugin result discarded"];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            XCTAssertEqual(newClone.requests.count, 1u);
+            [lateDrained fulfill];
+        });
+        [self waitForExpectations:@[lateDrained] timeout:5];
         XCTAssertTrue([parent dismissWebViewClone]);
 
         UIView *oldWebView = parent.webView;
@@ -271,6 +338,66 @@
         XCTAssertEqualObjects([parent valueForKey:@"loadCounter"], @1);
         XCTAssertTrue([manager removeItemAtPath:directory error:nil]);
     }
+}
+
+- (void)testMainAppSelectionPersistenceAndJSONHandoff
+{
+    NSString *key = [@"CDVTestSelection_" stringByAppendingString:NSUUID.UUID.UUIDString];
+    NSDictionary *apps = @{@"main": @{@"root": @"www", @"startPage": @"index.html"}, @"alternate": @{@"root": @"www", @"startPage": @"index.html?alternate=true"}};
+    CDVViewController *controller = [self viewController];
+    controller.webAppSelectionKey = key;
+    XCTAssertTrue([controller configureWebApps:apps defaultAppID:@"main" error:nil]);
+    XCTAssertEqualObjects(controller.activeWebAppID, @"main");
+    XCTestExpectation *initial = [self expectationForNotification:CDVPageDidLoadNotification object:nil handler:^BOOL(NSNotification *note) { return note.object == controller.webView; }];
+    [controller loadViewIfNeeded];
+    [self waitForExpectations:@[initial] timeout:15];
+    id oldDelegate = controller.commandDelegate;
+    UIView *oldView = controller.webView;
+    XCTestExpectation *replacement = [self expectationForNotification:CDVPageDidLoadNotification object:nil handler:^BOOL(NSNotification *note) { return note.object == controller.webView; }];
+    XCTAssertTrue([controller switchToWebApp:@"alternate" remember:YES context:@{@"token": @"handoff"} error:nil]);
+    XCTAssertNil([NSUserDefaults.standardUserDefaults objectForKey:key]);
+    [self waitForExpectations:@[replacement] timeout:15];
+    XCTAssertNotEqual(controller.webView, oldView);
+    XCTAssertNotEqual(controller.commandDelegate, oldDelegate);
+    XCTestExpectation *context = [self expectationWithDescription:@"replacement context injected"];
+    [controller.webViewEngine evaluateJavaScript:@"window.cordovaWebApp" completionHandler:^(id result, NSError *error) {
+        XCTAssertNil(error);
+        XCTAssertEqualObjects(result, (@{@"appId": @"alternate", @"context": @{@"token": @"handoff"}}));
+        [context fulfill];
+    }];
+    [self waitForExpectations:@[context] timeout:10];
+    [controller confirmWebAppReady];
+    CDVViewController *cold = [self viewController];
+    cold.webAppSelectionKey = key;
+    XCTAssertTrue([cold configureWebApps:apps defaultAppID:@"main" error:nil]);
+    XCTAssertEqualObjects(cold.activeWebAppID, @"alternate");
+    XCTAssertNil(cold.webAppContext);
+    XCTestExpectation *sessionSwitch = [self expectationForNotification:CDVPageDidLoadNotification object:nil handler:^BOOL(NSNotification *note) { return note.object == controller.webView; }];
+    XCTAssertTrue([controller switchToWebApp:@"main" remember:NO context:nil error:nil]);
+    [self waitForExpectations:@[sessionSwitch] timeout:15];
+    [controller confirmWebAppReady];
+    XCTAssertEqualObjects([NSUserDefaults.standardUserDefaults stringForKey:key], @"alternate");
+    NSError *error;
+    XCTAssertFalse([controller switchToWebApp:@"missing" remember:YES context:nil error:&error]);
+    XCTAssertNotNil(error);
+    [controller clearRememberedWebApp];
+    XCTAssertNil([NSUserDefaults.standardUserDefaults objectForKey:key]);
+}
+
+- (void)testMainTerminationPolicyAndInvalidHandoff
+{
+    CDVViewController *controller = [self viewController];
+    __block NSUInteger terminations = 0;
+    controller.webViewTerminationHandler = ^{ terminations++; };
+    XCTAssertTrue([controller handleWebContentTermination]);
+    controller.automaticWebViewRecoveryEnabled = NO;
+    XCTAssertFalse([controller handleWebContentTermination]);
+    XCTAssertEqual(terminations, 2u);
+    XCTAssertTrue(([controller configureWebApps:@{@"main": @{@"root": @"www", @"startPage": @"index.html"}} defaultAppID:@"main" error:nil]));
+    NSError *error = nil;
+    XCTAssertFalse([controller switchToWebApp:@"main" remember:NO context:NSDate.date error:&error]);
+    XCTAssertNotNil(error);
+    XCTAssertFalse(controller.isViewLoaded);
 }
 
 @end

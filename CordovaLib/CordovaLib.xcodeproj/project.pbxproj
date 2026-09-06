@@ -154,6 +154,8 @@
 		C0C01ECC1E39131A0056E6CB /* CDVWebViewEngineProtocol.h in Headers */ = {isa = PBXBuildFile; fileRef = 7ED95D2C1AB9029B008C4574 /* CDVWebViewEngineProtocol.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		C0C01ECE1E39131A0056E6CB /* NSDictionary+CordovaPreferences.h in Headers */ = {isa = PBXBuildFile; fileRef = 7ED95D311AB9029B008C4574 /* NSDictionary+CordovaPreferences.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		C0C01ECF1E39131A0056E6CB /* NSMutableArray+QueueAdditions.h in Headers */ = {isa = PBXBuildFile; fileRef = 7ED95D331AB9029B008C4574 /* NSMutableArray+QueueAdditions.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		CD6000000000000000000004 /* CDVGameViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = CD6000000000000000000002 /* CDVGameViewController.m */; };
+		CD6000000000000000000005 /* CDVGameViewController.m in Sources */ = {isa = PBXBuildFile; fileRef = CD6000000000000000000002 /* CDVGameViewController.m */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -225,6 +227,9 @@
 		C0C01EB21E3911D50056E6CB /* Cordova.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = Cordova.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		C0C01EB41E3911D50056E6CB /* Cordova.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = Cordova.h; sourceTree = "<group>"; };
 		C0C01EB51E3911D50056E6CB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		CD6000000000000000000001 /* CDVGameViewController.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CDVGameViewController.h; sourceTree = "<group>"; };
+		CD6000000000000000000002 /* CDVGameViewController.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CDVGameViewController.m; sourceTree = "<group>"; };
+		CD6000000000000000000003 /* CDVGameHostScript.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CDVGameHostScript.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -312,6 +317,9 @@
 		7ED95CF11AB9028C008C4574 /* Private */ = {
 			isa = PBXGroup;
 			children = (
+				CD6000000000000000000001 /* CDVGameViewController.h */,
+				CD6000000000000000000002 /* CDVGameViewController.m */,
+				CD6000000000000000000003 /* CDVGameHostScript.h */,
 				7ED95D151AB9029B008C4574 /* CDVCommandDelegateImpl.h */,
 				7ED95D161AB9029B008C4574 /* CDVCommandDelegateImpl.m */,
 				7ED95CF21AB9028C008C4574 /* CDVDebug.h */,
@@ -625,6 +633,7 @@
 				9052DE792150D040008E83D4 /* CDVTimer.m in Sources */,
 				4F56D833254A2ED90063F1D6 /* CDVWebViewProcessPoolFactory.m in Sources */,
 				4F56D82D254A2EB50063F1D6 /* CDVWebViewEngine.m in Sources */,
+				CD6000000000000000000004 /* CDVGameViewController.m in Sources */,
 				9052DE7C2150D040008E83D4 /* CDVViewController.m in Sources */,
 				9052DE7E2150D040008E83D4 /* NSDictionary+CordovaPreferences.m in Sources */,
 				9052DE7F2150D040008E83D4 /* NSMutableArray+QueueAdditions.m in Sources */,
@@ -658,6 +667,7 @@
 				7ED95D4B1AB9029B008C4574 /* CDVTimer.m in Sources */,
 				4E23F8FE23E16E96006CD852 /* CDVWebViewEngine.m in Sources */,
 				4E23F8FB23E16E96006CD852 /* CDVWebViewProcessPoolFactory.m in Sources */,
+				CD6000000000000000000005 /* CDVGameViewController.m in Sources */,
 				7ED95D511AB9029B008C4574 /* CDVViewController.m in Sources */,
 				7ED95D581AB9029B008C4574 /* NSDictionary+CordovaPreferences.m in Sources */,
 				7ED95D5A1AB9029B008C4574 /* NSMutableArray+QueueAdditions.m in Sources */,

@@ -32,5 +32,6 @@
     BOOL _delayResponses;
 }
 - (instancetype)initWithViewController:(CDVViewController *)viewController;
+- (void)invalidate;
 - (void)flushCommandQueueWithDelayedJs;
 @end

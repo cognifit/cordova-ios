@@ -339,7 +339,29 @@ typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 - (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
 - (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
 
-/** Creates a clone with a snapshot of this controller's root and start page. Requires iOS 14+. */
+/** Register app IDs mapped to {root, startPage}, before loading the main view.
+ Restores a remembered ID if still registered; otherwise selects defaultAppID.
+ */
+- (BOOL)configureWebApps:(NSDictionary<NSString *, NSDictionary *> *)apps defaultAppID:(NSString *)defaultAppID error:(NSError *_Nullable *_Nullable)error;
+/** Replace the main app and its plugins; context must be JSON-compatible.
+ remember=NO changes only this session. remember=YES is committed by confirmWebAppReady.
+ */
+- (BOOL)switchToWebApp:(NSString *)appID remember:(BOOL)remember context:(nullable id)context error:(NSError *_Nullable *_Nullable)error;
+- (void)confirmWebAppReady;
+- (void)clearRememberedWebApp;
+@property (nonatomic, copy) NSString *webAppSelectionKey;
+@property (nonatomic, readonly, copy, nullable) NSString *activeWebAppID;
+@property (nonatomic, readonly, strong, nullable) id webAppContext;
+/** Preserves upstream automatic main-webview recovery by default; set NO for app-owned recovery. */
+@property (nonatomic, assign) BOOL automaticWebViewRecoveryEnabled;
+@property (nonatomic, copy, nullable) void (^webViewTerminationHandler)(void);
+
+/** Native delivery of clone messages and lifecycle events. Recovery policy belongs to the app. */
+@property (nonatomic, copy, nullable) void (^cloneEventHandler)(NSDictionary *event);
+/** Deliver a JSON-compatible value to window.host.onmessage in the current game. */
+- (void)postMessageToWebViewClone:(id)message completionHandler:(void (^_Nullable)(NSError *_Nullable error))completionHandler;
+
+/** Creates a vanilla, plugin-free clone with a snapshot of this controller's root and start page. Requires iOS 14+. */
 - (BOOL)createWebViewClone;
 /** Creates an independently rooted clone. A nil start page uses config.xml. Returns NO if one already exists. */
 - (BOOL)createWebViewCloneWithWebContentFolderName:(NSString *)folderName startPage:(nullable NSString *)startPage;

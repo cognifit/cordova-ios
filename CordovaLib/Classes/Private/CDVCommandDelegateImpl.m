@@ -44,6 +44,12 @@
     return self;
 }
 
+- (void)invalidate
+{
+    _viewController = nil;
+    _commandQueue = nil;
+}
+
 - (NSString*)pathForResource:(NSString*)resourcepath
 {
     if (_viewController.webContentFolderName.isAbsolutePath || [_viewController.webContentFolderName hasPrefix:@"file://"]) {
@@ -127,6 +133,7 @@
 
 - (void)sendPluginResult:(CDVPluginResult*)result callbackId:(NSString*)callbackId
 {
+    if ([_viewController routeHostPluginResult:result callbackId:callbackId]) return;
     CDV_EXEC_LOG(@"Exec(%@): Sending result. Status=%@", callbackId, result.status);
     // This occurs when there is are no win/fail callbacks for the call.
     if ([@"INVALID" isEqualToString:callbackId]) {

@@ -556,6 +556,7 @@
 
 - (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView
 {
+    if (![self.viewController handleWebContentTermination]) return;
     CDVSettingsDictionary *settings = self.commandDelegate.settings;
     NSString *recoveryBehavior = [settings cordovaSettingForKey:@"CrashRecoveryBehavior"];
 

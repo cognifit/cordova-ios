@@ -34,6 +34,9 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
 @interface CDVURLSchemeHandler ()
 
 @property (nonatomic, weak) CDVViewController *viewController;
+@property (nonatomic, strong) NSURL *contentRoot;
+@property (nonatomic, copy) NSString *contentStartPage;
+@property (nonatomic, copy) NSString *contentScheme;
 @property (nonatomic) NSMapTable <id <WKURLSchemeTask>, CDVPlugin <CDVPluginSchemeHandler> *> *handlerMap;
 
 @end
@@ -46,6 +49,17 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
     if (self) {
         _viewController = controller;
         _handlerMap = [NSMapTable weakToWeakObjectsMapTable];
+    }
+    return self;
+}
+
+- (instancetype)initWithContentRoot:(NSURL *)root startPage:(NSString *)startPage scheme:(NSString *)scheme
+{
+    self = [self initWithViewController:nil];
+    if (self) {
+        _contentRoot = root;
+        _contentStartPage = startPage;
+        _contentScheme = scheme;
     }
     return self;
 }
@@ -66,7 +80,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
 
 
     NSURLRequest *req = urlSchemeTask.request;
-    if (![req.URL.scheme isEqualToString:self.viewController.appScheme]) {
+    if (![req.URL.scheme isEqualToString:(self.contentScheme ?: self.viewController.appScheme)]) {
         return;
     }
 
@@ -147,7 +161,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
     NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:req.URL statusCode:statusCode HTTPVersion:@"HTTP/1.1" headerFields:headers];
     [urlSchemeTask didReceiveResponse:response];
 
-    [self.viewController.commandDelegate runInBackground:^{
+    void (^readContent)(void) = ^{
         NSError *readError;
         NSUInteger responseSent = 0;
 
@@ -156,7 +170,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
         // WKURLSchemeTask callbacks with webView:stopURLSchemeTask:, which is
         // also called on the main thread. This eliminates the race condition
         // between the taskActive check and the actual callback invocation.
-        while (responseSent < [responseSize unsignedIntegerValue]) {
+        while (responseSent < [responseSize unsignedIntegerValue] && [self taskActive:urlSchemeTask]) {
             @autoreleasepool {
                 NSData *data = [self readFromFileHandle:fileHandle upTo:FILE_BUFFER_SIZE error:&readError];
                 if (!data || readError || data.length == 0) {
@@ -186,7 +200,12 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
                 [self.handlerMap removeObjectForKey:urlSchemeTask];
             }
         });
-    }];
+    };
+    if (self.viewController) {
+        [self.viewController.commandDelegate runInBackground:readContent];
+    } else {
+        dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), readContent);
+    }
 }
 
 - (void)webView:(WKWebView *)webView stopURLSchemeTask:(id <WKURLSchemeTask>)urlSchemeTask
@@ -211,7 +230,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
 
 - (NSURL *)fileURLForRequestURL:(NSURL *)url
 {
-    NSURL *resDir = [self.viewController webContentURL];
+    NSURL *resDir = self.contentRoot ?: [self.viewController webContentURL];
     NSURL *filePath;
 
     if ([url.path hasPrefix:@"/_app_file_"]) {
@@ -219,7 +238,7 @@ static const NSUInteger FILE_BUFFER_SIZE = 1024 * 1024 * 4; // 4 MiB
         filePath = [NSURL fileURLWithPath:path relativeToURL:resDir];
     } else {
         if ([url.path isEqualToString:@""] || [url.pathExtension isEqualToString:@""]) {
-            filePath = [resDir URLByAppendingPathComponent:[NSURL URLWithString:self.viewController.startPage].path];
+            filePath = [resDir URLByAppendingPathComponent:[NSURL URLWithString:(self.contentStartPage ?: self.viewController.startPage)].path];
         } else {
             filePath = [resDir URLByAppendingPathComponent:url.path];
         }

@@ -17,22 +17,19 @@
     under the License.
 */
 
-#import <Cordova/CDVViewController.h>
-
-@class CDVPluginResult;
+#import <UIKit/UIKit.h>
+#import <WebKit/WebKit.h>
 
 NS_ASSUME_NONNULL_BEGIN
-
-@interface CDVViewController (Private)
-
-- (nullable NSURL *)webContentURL;
-- (BOOL)handleWebContentTermination;
-- (BOOL)routeHostPluginResult:(CDVPluginResult *)result callbackId:(NSString *)callbackId;
-
-- (void)setStatusBarWebViewColor:(UIColor *)color;
-
-- (void)showStatusBar:(BOOL)visible;
-
+@interface CDVGameViewController : UIViewController <WKNavigationDelegate>
+@property (nonatomic, copy) NSString *webContentFolderName;
+@property (nonatomic, copy) NSString *startPage;
+@property (nonatomic, readonly, nullable) WKWebView *webView;
+@property (nonatomic, assign) BOOL cloneReady;
+@property (nonatomic, copy) NSString *sessionID;
+@property (nonatomic, strong, nullable) id<WKScriptMessageHandlerWithReply> messageHandler;
+@property (nonatomic, copy, nullable) void (^eventHandler)(NSString *, NSDictionary *);
+@property (nonatomic, strong) NSMutableDictionary<NSString *, NSNumber *> *requests;
+- (void)dispose;
 @end
-
 NS_ASSUME_NONNULL_END

@@ -24,7 +24,9 @@
 @interface CDVURLSchemeHandler : NSObject <WKURLSchemeHandler>
 NS_ASSUME_NONNULL_BEGIN
 
-- (instancetype)initWithViewController:(CDVViewController *)controller;
+- (instancetype)initWithContentRoot:(NSURL *)root startPage:(NSString *)startPage scheme:(NSString *)scheme;
+
+- (instancetype)initWithViewController:(nullable CDVViewController *)controller;
 
 NS_ASSUME_NONNULL_END
 @end
