@@ -20,5 +20,12 @@
 import Cordova
 
 class SceneDelegate: CDVSceneDelegate {
-}
+    override func scene(_ scene: UIScene, willConnectTo session: UISceneSession, options connectionOptions: UIScene.ConnectionOptions) {
+        window.rootViewController?.loadViewIfNeeded()
+        super.scene(scene, willConnectTo: session, options: connectionOptions)
 
+        for activity in connectionOptions.userActivities {
+            self.scene(scene, continue: activity)
+        }
+    }
+}
