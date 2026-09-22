@@ -93,6 +93,15 @@ NS_ASSUME_NONNULL_END
 @property (nonatomic, weak) CDVViewController *viewController;
 
 /**
+ The window resolved by this plugin's ``viewController``.
+
+ Prefer this over the application delegate's window when using UIScene.
+ Call on the main thread. See ``CDVViewController/currentWindow`` for fallback
+ behavior. Returns nil when the plugin has no view controller.
+ */
+@property (nonatomic, readonly, nullable) UIWindow *currentWindow;
+
+/**
  The application's Cordova command delegate instance.
 
  @Metadata {

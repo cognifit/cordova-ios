@@ -64,6 +64,36 @@
 
 @implementation CDVViewControllerTest
 
+- (void)testCurrentWindowDoesNotLoadView
+{
+    CDVViewController *controller = [self viewController];
+    (void)controller.currentWindow;
+    XCTAssertFalse(controller.isViewLoaded);
+}
+
+- (void)testCurrentWindowFollowsAttachedViewAndPluginDisposal
+{
+    CDVViewController *controller = [self viewController];
+    controller.view = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 320, 480)];
+    UIWindow *first = [[UIWindow alloc] initWithFrame:controller.view.bounds];
+    UIWindow *second = [[UIWindow alloc] initWithFrame:controller.view.bounds];
+    CDVPlugin *plugin = [CDVPlugin new];
+    XCTAssertNil(plugin.currentWindow);
+    plugin.viewController = controller;
+
+    [first addSubview:controller.view];
+    XCTAssertEqual(controller.currentWindow, first);
+    XCTAssertEqual(plugin.currentWindow, first);
+
+    [second addSubview:controller.view];
+    XCTAssertEqual(controller.currentWindow, second);
+    XCTAssertEqual(plugin.currentWindow, second);
+
+    [plugin dispose];
+    XCTAssertNil(plugin.currentWindow);
+    [controller.view removeFromSuperview];
+}
+
 -(CDVViewController*)viewController{
     CDVViewController* viewController = [CDVViewController new];
     return viewController;

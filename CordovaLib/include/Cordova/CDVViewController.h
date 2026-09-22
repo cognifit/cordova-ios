@@ -73,6 +73,21 @@ NS_ASSUME_NONNULL_BEGIN
 @property (nonatomic, readonly, nullable, weak) IBOutlet UIView *webView;
 
 /**
+ The window hosting this controller's web view or loaded view.
+
+ Prefer this over `UIApplication.sharedApplication.delegate.window`, which
+ may be nil when using the UIScene lifecycle. Call on the main thread.
+ Reading this property does not load the view or cache the window.
+
+ If neither view is attached, falls back to the legacy application delegate's
+ window, then the key window (or first window) of the sole foreground-active
+ window scene. Returns nil if no window is available or the scene is ambiguous.
+ A fallback window is not guaranteed to host this controller; callers requiring
+ an attached view should use `webView.window` instead.
+ */
+@property (nonatomic, readonly, nullable) UIWindow *currentWindow;
+
+/**
  An array of loaded Cordova plugin instances.
 
  This array is safe to iterate using a `for...in` loop.

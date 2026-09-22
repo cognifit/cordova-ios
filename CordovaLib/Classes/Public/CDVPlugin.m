@@ -125,6 +125,11 @@ const NSNotificationName CDVViewWillTransitionToSizeNotification = @"CDVViewWill
     return nil;
 }
 
+- (nullable UIWindow *)currentWindow
+{
+    return self.viewController.currentWindow;
+}
+
 /*
 // NOTE: for onPause and onResume, calls into JavaScript must not call or trigger any blocking UI, like alerts
 - (void) onPause {}

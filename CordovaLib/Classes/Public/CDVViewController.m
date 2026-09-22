@@ -358,6 +358,42 @@ API_AVAILABLE(ios(14.0))
     return nil;
 }
 
+- (nullable UIWindow *)currentWindow
+{
+    UIWindow *window = self.webView.window ?: self.viewIfLoaded.window;
+    if (window != nil) {
+        return window;
+    }
+
+    UIApplication *application = UIApplication.sharedApplication;
+    id<UIApplicationDelegate> delegate = application.delegate;
+    if ([delegate respondsToSelector:@selector(window)]) {
+        window = delegate.window;
+        if (window != nil) {
+            return window;
+        }
+    }
+
+    // Without an attached view, multiple active scenes cannot be disambiguated.
+    UIWindowScene *activeScene = nil;
+    for (UIScene *scene in application.connectedScenes) {
+        if (![scene isKindOfClass:UIWindowScene.class] ||
+            scene.activationState != UISceneActivationStateForegroundActive) {
+            continue;
+        }
+        if (activeScene != nil) {
+            return nil;
+        }
+        activeScene = (UIWindowScene *)scene;
+    }
+    for (UIWindow *candidate in activeScene.windows) {
+        if (candidate.isKeyWindow) {
+            return candidate;
+        }
+    }
+    return activeScene.windows.firstObject;
+}
+
 - (nullable UIView *)webView
 {
     if (_webViewEngine != nil) {
