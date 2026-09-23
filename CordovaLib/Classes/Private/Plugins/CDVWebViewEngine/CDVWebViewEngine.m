@@ -239,6 +239,18 @@
     // re-create WKWebView, since we need to update configuration
     WKWebView *wkWebView = [[WKWebView alloc] initWithFrame:self.engineWebView.frame configuration:configuration];
 
+    // Leave UIKit's default behavior unchanged unless the app specifies one.
+    NSString *contentInsetAdjustmentBehavior = [settings cordovaSettingForKey:@"ContentInsetAdjustmentBehavior"];
+    if ([contentInsetAdjustmentBehavior isEqualToString:@"automatic"]) {
+        wkWebView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAutomatic;
+    } else if ([contentInsetAdjustmentBehavior isEqualToString:@"scrollableAxes"]) {
+        wkWebView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentScrollableAxes;
+    } else if ([contentInsetAdjustmentBehavior isEqualToString:@"never"]) {
+        wkWebView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
+    } else if ([contentInsetAdjustmentBehavior isEqualToString:@"always"]) {
+        wkWebView.scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentAlways;
+    }
+
 #if __IPHONE_OS_VERSION_MAX_ALLOWED >= 160400
     // With the introduction of iOS 16.4 the webview is no longer inspectable by default.
     // We'll honor that change for release builds, but will still allow inspection on debug builds by default.

@@ -50,6 +50,8 @@
     <!-- Preferences for iOS -->
     <preference name="AllowInlineMediaPlayback" value="false" />
     <preference name="DisallowOverscroll" value="false" />
+    <!-- Optional: automatic, scrollableAxes, never, or always. Omitted by default. -->
+    <!-- <preference name="ContentInsetAdjustmentBehavior" value="never" /> -->
     <preference name="EnableViewportScale" value="false" />
     <preference name="MediaTypesRequiringUserActionForPlayback" value="false" />
     <preference name="SuppressesIncrementalRendering" value="false" />
