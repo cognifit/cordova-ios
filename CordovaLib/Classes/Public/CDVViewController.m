@@ -40,6 +40,8 @@ static UIColor *defaultBackgroundColor(void) {
 
 /** Flag to know if the App is "cold booting" or not. This value is passed to the web App. */
 static BOOL IS_COLD_BOOT = YES;
+static BOOL deviceReadyWatchdogArmed = NO;
+static BOOL deviceReadyWatchdogReloaded = NO;
 
 API_AVAILABLE(ios(14.0))
 @interface CloneMessageHandler : NSObject<WKScriptMessageHandlerWithReply>
@@ -92,6 +94,8 @@ API_AVAILABLE(ios(14.0))
 @property (nonatomic, readwrite, strong) id webAppContext;
 @property (nonatomic, copy) NSString *pendingPersistentWebAppID;
 @property (readwrite, assign) BOOL initialized;
+
+- (void)checkColdBootDeviceReadyInWebView:(WKWebView *)webView finalCheck:(BOOL)finalCheck;
 
 @end
 
@@ -645,6 +649,18 @@ API_AVAILABLE(ios(14.0))
     if (notification.object != self.webView) {
         return;
     }
+    if (!deviceReadyWatchdogArmed && [self.webView isKindOfClass:WKWebView.class]) {
+        deviceReadyWatchdogArmed = YES;
+        __weak CDVViewController *weakSelf = self;
+        __weak WKWebView *weakWebView = (WKWebView *)self.webView;
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+            CDVViewController *controller = weakSelf;
+            WKWebView *webView = weakWebView;
+            if (controller && webView && controller.webView == webView) {
+                [controller checkColdBootDeviceReadyInWebView:webView finalCheck:NO];
+            }
+        });
+    }
     self.loadCounter += 1;
     [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.ionicWebViewLoadCounter = %li; window.ionicIsColdBoot = %s;", (long)self.loadCounter, IS_COLD_BOOT ? "true" : "false"] completionHandler:nil];
     IS_COLD_BOOT = NO;
@@ -669,6 +685,34 @@ API_AVAILABLE(ios(14.0))
             }];
         }
     }
+}
+
+- (void)checkColdBootDeviceReadyInWebView:(WKWebView *)webView finalCheck:(BOOL)finalCheck
+{
+    static NSString *const readyScript = @"(function () { try { var channel = cordova.require('cordova/channel'); return channel.onDeviceReady.state === 2; } catch (e) { return false; } })();";
+    __weak CDVViewController *weakSelf = self;
+    __weak WKWebView *weakWebView = webView;
+    [webView evaluateJavaScript:readyScript completionHandler:^(id result, NSError *error) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            CDVViewController *controller = weakSelf;
+            WKWebView *currentWebView = weakWebView;
+            if (!controller || !currentWebView || controller.webView != currentWebView || deviceReadyWatchdogReloaded) return;
+            if (!error && [result respondsToSelector:@selector(boolValue)] && [result boolValue]) return;
+
+            if (!finalCheck) {
+                dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(NSEC_PER_SEC)), dispatch_get_main_queue(), ^{
+                    CDVViewController *nextController = weakSelf;
+                    WKWebView *nextWebView = weakWebView;
+                    if (nextController && nextWebView && nextController.webView == nextWebView) {
+                        [nextController checkColdBootDeviceReadyInWebView:nextWebView finalCheck:YES];
+                    }
+                });
+            } else {
+                deviceReadyWatchdogReloaded = YES;
+                [currentWebView reload];
+            }
+        });
+    }];
 }
 
 - (void)scrollViewDidChangeAdjustedContentInset:(UIScrollView *)scrollView
