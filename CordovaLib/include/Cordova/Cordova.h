@@ -24,6 +24,7 @@
 #import <Cordova/CDVAppDelegate.h>
 #import <Cordova/CDVSceneDelegate.h>
 #import <Cordova/CDVPlugin.h>
+#import <Cordova/CDVSecondaryWebView.h>
 #import <Cordova/CDVPluginNotifications.h>
 #import <Cordova/CDVPluginResult.h>
 #import <Cordova/CDVViewController.h>

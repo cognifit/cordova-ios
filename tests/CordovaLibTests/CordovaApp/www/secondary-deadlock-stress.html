@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Secondary scheme stress</title></head>
+<body>
+<h1>Secondary scheme stress</h1>
+<pre id="progress">Waiting…</pre>
+<div id="images"></div>
+<script>
+(function () {
+    const progress = document.getElementById('progress');
+    const images = document.getElementById('images');
+    progress.textContent = 'Script started; bridge=' + Boolean(window.secondaryWebView);
+    window.addEventListener('error', event => { progress.textContent = 'Script error: ' + event.message; });
+    let completed = 0;
+    let errors = 0;
+    function send(name, payload) { if (window.secondaryWebView) window.secondaryWebView.post(name, payload); }
+    function batch(phase) {
+        completed = 0;
+        errors = 0;
+        const count = phase === 'destroy' ? 512 : 144;
+        if (phase === 'first') {
+            send('stressLargeMessage', {data: 'x'.repeat(600000)});
+            window.secondaryWebView.subscribe('invalid-types', {rateHz: null}).then(
+                () => send('stressInvalidTypes', {completed: false}),
+                () => send('stressInvalidTypes', {completed: true}));
+        }
+        const imageNodes = [];
+        const frames = [];
+        if (phase === 'destroy') send('stressDestroyReady', {completed, errors});
+        // The asynchronous requests start in one JavaScript turn before callbacks can run.
+        for (let i = 0; i < count; i++) {
+            const image = new Image();
+            image.onload = () => completed++;
+            image.onerror = () => errors++;
+            image.src = 'secondary-stress.svg?n=' + phase + '-' + i;
+            images.appendChild(image);
+            imageNodes.push(image);
+        }
+        for (let i = 0; i < count; i++) {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', 'secondary-stress-data.json?n=' + phase + '-' + i, true);
+            xhr.onload = () => completed++;
+            xhr.onerror = () => errors++;
+            xhr.onabort = () => errors++;
+            xhr.send();
+        }
+        if (phase === 'destroy') {
+            progress.textContent = 'destroy: 1,024 image/XHR requests started';
+            return;
+        }
+        for (let i = 0; i < 12; i++) {
+            const xhr = new XMLHttpRequest();
+            xhr.open('GET', 'secondary-stress-data.json?sync=' + phase + '-' + i, false);
+            try { xhr.send(); if (xhr.status === 200) completed++; else errors++; } catch (_) { errors++; }
+        }
+        for (let i = 0; i < 8; i++) {
+            const frame = document.createElement('iframe');
+            frame.src = 'secondary-stress-frame.html?initial=' + i;
+            document.body.appendChild(frame);
+            frames.push(frame);
+        }
+        for (let i = 0; i < 32; i++) {
+            setTimeout(() => {
+                const image = imageNodes[(i * 37) % imageNodes.length];
+                image.remove();
+                const frame = frames[i % frames.length];
+                if (frame.isConnected) frame.src = 'secondary-stress-frame.html?navigation=' + phase + '-' + i;
+                if (i % 4 === 0) frames[(i / 4) % frames.length].remove();
+            }, 5 + i * 7);
+        }
+        progress.textContent = phase + ': ' + (count * 2) + ' parallel image/XHR requests, 12 sync XHR, 32 removals/navigations';
+        setTimeout(() => send('stressFirstRoundDone', {completed, errors}), 2500);
+    }
+    if (!window.secondaryWebView) return;
+    window.secondaryWebView.on('stressStart', () => batch('first'));
+    window.secondaryWebView.on('stressStartDestroy', () => batch('destroy'));
+})();
+</script>
+</body>
+</html>

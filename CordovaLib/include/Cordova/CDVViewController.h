@@ -332,10 +332,6 @@ NS_ASSUME_NONNULL_BEGIN
 - (void)showSplashScreen:(BOOL)visible;
 
 
-/** Completion handlers used by the clone bridge. */
-typedef void (^_Nullable VoidCompletionHandler)(BOOL);
-typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
-
 /** Shows app-provided HTML in a separate WKWebView overlay, or a native spinner when html is nil.
  The overlay has no Cordova bridge. Prefer self-contained HTML for fast rendering.
  baseURL is used to resolve relative URLs in the supplied HTML. Call on the main thread.
@@ -345,11 +341,6 @@ typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 - (void)hideLoadingScreen;
 /** Recreates the app webview behind the overlay. AutoHideSplashScreen controls automatic dismissal. */
 - (void)reloadAppWithLoadingScreenHTML:(nullable NSString *)html baseURL:(nullable NSURL *)baseURL;
-/** Shows an overlay over the parent until the clone announces UP_AND_RUNNING.
- Passing nil HTML selects the native default. An already-ready clone appears immediately.
- */
-- (void)showWebViewCloneWithLoadingScreenHTML:(nullable NSString *)html baseURL:(nullable NSURL *)baseURL completionHandler:(VoidCompletionHandler)completionHandler;
-
 /** Legacy entry points: optional app-owned style files are supported; otherwise use the native default. */
 - (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
 - (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(nullable NSString *)strokeColor;
@@ -370,23 +361,6 @@ typedef void (^_Nullable TaskCompletionHandler)(NSDictionary* _Nullable);
 /** Preserves upstream automatic main-webview recovery by default; set NO for app-owned recovery. */
 @property (nonatomic, assign) BOOL automaticWebViewRecoveryEnabled;
 @property (nonatomic, copy, nullable) void (^webViewTerminationHandler)(void);
-
-/** Native delivery of clone messages and lifecycle events. Recovery policy belongs to the app. */
-@property (nonatomic, copy, nullable) void (^cloneEventHandler)(NSDictionary *event);
-/** Deliver a JSON-compatible value to window.host.onmessage in the current game. */
-- (void)postMessageToWebViewClone:(id)message completionHandler:(void (^_Nullable)(NSError *_Nullable error))completionHandler;
-
-/** Creates a vanilla, plugin-free clone with a snapshot of this controller's root and start page. Requires iOS 14+. */
-- (BOOL)createWebViewClone;
-/** Creates an independently rooted clone. A nil start page uses config.xml. Returns NO if one already exists. */
-- (BOOL)createWebViewCloneWithWebContentFolderName:(NSString *)folderName startPage:(nullable NSString *)startPage;
-/** Shows the clone when its web app posts UP_AND_RUNNING; subsequent calls show it immediately. */
-- (void)showWebViewClone:(VoidCompletionHandler)completionHandler;
-/** Returns to the parent while keeping the clone alive. */
-- (BOOL)hideWebViewClone;
-/** Destroys the clone so its web content and plugins can be released. */
-- (BOOL)dismissWebViewClone;
-- (void)loadTaskInWebViewCloneWithJsCommand:(NSString *)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler;
 
 #pragma mark - Deprecated
 

@@ -36,6 +36,8 @@ module.exports = {
         // see the file under plugin/ios/statusbar.js
         require('cordova/modulemapper').clobbers('cordova/plugin/ios/statusbar', 'window.statusbar');
 
+        require('cordova/modulemapper').clobbers('cordova/plugin/ios/secondarywebview', 'cordova.secondaryWebView');
+
         require('cordova/channel').onNativeReady.fire();
     }
 };

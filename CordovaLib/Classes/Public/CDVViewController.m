@@ -18,7 +18,6 @@
 */
 
 #import <TargetConditionals.h>
-#import <AVFoundation/AVFoundation.h>
 #import <Foundation/Foundation.h>
 #import <WebKit/WebKit.h>
 
@@ -30,9 +29,6 @@
 #import <Cordova/CDVTimer.h>
 #import "CDVCommandDelegateImpl.h"
 #import "CDVViewController+Private.h"
-#import "CDVGameViewController.h"
-#import <Cordova/CDVInvokedUrlCommand.h>
-#import <Cordova/CDVPluginResult.h>
 
 static UIColor *defaultBackgroundColor(void) {
     return UIColor.systemBackgroundColor;
@@ -42,24 +38,6 @@ static UIColor *defaultBackgroundColor(void) {
 static BOOL IS_COLD_BOOT = YES;
 static BOOL deviceReadyWatchdogArmed = NO;
 static BOOL deviceReadyWatchdogReloaded = NO;
-
-API_AVAILABLE(ios(14.0))
-@interface CloneMessageHandler : NSObject<WKScriptMessageHandlerWithReply>
-
-@property (nonatomic, weak, readonly) CDVViewController* viewController;
-
-- (instancetype)initWithViewController:(CDVViewController*)viewController;
-
-@end
-
-API_AVAILABLE(ios(14.0))
-@interface WebViewWeakScriptMessageHandler : NSObject <WKScriptMessageHandlerWithReply>
-
-@property (nonatomic, weak, readonly) id<WKScriptMessageHandlerWithReply>scriptMessageHandler;
-
-- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler;
-
-@end
 
 @interface CDVViewController () <CDVWebViewEngineConfigurationDelegate, UIScrollViewDelegate> {
     id <CDVWebViewEngineProtocol> _webViewEngine;
@@ -79,15 +57,8 @@ API_AVAILABLE(ios(14.0))
 @property (nonatomic, readwrite, strong) UIView *launchView;
 @property (nonatomic, readwrite, strong) UIView *statusBar;
 @property (nonatomic, readwrite, strong) UIView* backgroundView;
-@property (nonatomic, assign) BOOL loadingScreenForClone;
 
 @property (readwrite, assign) NSInteger loadCounter;
-
-@property (nonatomic, readwrite, strong) CDVGameViewController* clone;
-@property (readwrite, assign) BOOL clonePresentationRequested;
-@property (nonatomic, readwrite, strong) id<WKScriptMessageHandlerWithReply> cloneMessageHandler;
-@property (nonatomic, readwrite, copy) VoidCompletionHandler showWebViewCloneCompletionHandler;
-@property (nonatomic, readwrite, copy) TaskCompletionHandler loadTaskInWebViewCloneCompletionHandler;
 
 @property (nonatomic, copy) NSDictionary<NSString *, NSDictionary *> *registeredWebApps;
 @property (nonatomic, readwrite, copy) NSString *activeWebAppID;
@@ -1033,7 +1004,7 @@ API_AVAILABLE(ios(14.0))
             [self.webView becomeFirstResponder];
         }
     }];
-    if (!visible && !self.loadingScreenForClone) [self hideLoadingScreen];
+    if (!visible) [self hideLoadingScreen];
 }
 
 // ///////////////////////
@@ -1073,7 +1044,6 @@ API_AVAILABLE(ios(14.0))
     }
     [self.backgroundView removeFromSuperview];
     self.backgroundView = nil;
-    self.loadingScreenForClone = NO;
 }
 
 - (void)showNativeBackgroundView:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor
@@ -1102,7 +1072,6 @@ API_AVAILABLE(ios(14.0))
 
 - (void)reloadAppWithLoadingScreenHTML:(NSString *)html baseURL:(NSURL *)baseURL
 {
-    [self dismissWebViewClone];
     [self showLoadingScreenWithHTML:html baseURL:baseURL];
     [self recreateAppWebView];
 }
@@ -1110,7 +1079,6 @@ API_AVAILABLE(ios(14.0))
 - (void)reloadAppWithBackgroundStyle:(NSString *)backgroundStyle andStrokeColor:(NSString *)strokeColor
 {
     [self loadViewIfNeeded];
-    [self dismissWebViewClone];
     if (backgroundStyle.length > 0 && ![backgroundStyle isEqualToString:@"nil"]) {
         [self showNativeBackgroundView:backgroundStyle andStrokeColor:strokeColor];
     } else {
@@ -1219,198 +1187,6 @@ API_AVAILABLE(ios(14.0))
     return self.automaticWebViewRecoveryEnabled;
 }
 
-- (BOOL)createWebViewClone
-{
-    return [self createWebViewCloneWithWebContentFolderName:self.webContentFolderName startPage:self.startPage];
-}
-
-- (BOOL)createWebViewCloneWithWebContentFolderName:(NSString *)folderName startPage:(NSString *)startPage
-{
-    if (@available(iOS 14.0, *)) {
-        if (self.clone != nil || folderName.length == 0) return NO;
-        CDVGameViewController *clone = [[CDVGameViewController alloc] init];
-        clone.webContentFolderName = folderName;
-        clone.startPage = startPage ?: [CDVConfigParser parseConfigFile:self.configFilePath].startPage ?: @"index.html";
-        self.cloneMessageHandler = [[CloneMessageHandler alloc] initWithViewController:self];
-        clone.messageHandler = [[WebViewWeakScriptMessageHandler alloc] initWithScriptMessageHandler:self.cloneMessageHandler];
-        __weak CDVViewController *weakSelf = self;
-        clone.eventHandler = ^(NSString *event, NSDictionary *detail) {
-            CDVViewController *parent = weakSelf;
-            if (!parent) return;
-            if ([event isEqualToString:@"terminated"] || [event isEqualToString:@"loadFailed"]) {
-                VoidCompletionHandler completion = parent.showWebViewCloneCompletionHandler;
-                parent.showWebViewCloneCompletionHandler = nil;
-                if (completion) completion(NO);
-            }
-            [parent emitCloneEvent:event detail:detail];
-        };
-        self.clone = clone;
-        [self addChildViewController:clone];
-        return YES;
-    }
-    return NO;
-}
-
-- (void)emitCloneEvent:(NSString *)event detail:(id)detail
-{
-    NSDictionary *message = @{@"type": event, @"detail": detail ?: NSNull.null};
-    if (self.cloneEventHandler) self.cloneEventHandler(message);
-    NSData *data = [NSJSONSerialization dataWithJSONObject:message options:0 error:nil];
-    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    [self.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.dispatchEvent(new CustomEvent('cordovacloneevent',{detail:%@}));", json] completionHandler:nil];
-}
-
-- (NSArray<NSDictionary *> *)loadedPluginsForClone
-{
-    NSMutableArray *plugins = [NSMutableArray array];
-    @synchronized(_pluginObjects) {
-        for (NSString *className in _pluginObjects) {
-            NSMutableArray *services = [NSMutableArray array];
-            for (NSString *service in _pluginsMap) {
-                if ([_pluginsMap[service] isEqualToString:className]) [services addObject:service];
-            }
-            [plugins addObject:@{@"className": className, @"services": [services sortedArrayUsingSelector:@selector(compare:)]}];
-        }
-    }
-    return [plugins sortedArrayUsingDescriptors:@[[NSSortDescriptor sortDescriptorWithKey:@"className" ascending:YES]]];
-}
-
-- (BOOL)routeHostPluginResult:(CDVPluginResult *)result callbackId:(NSString *)callbackId
-{
-    if (![callbackId hasPrefix:@"CDVHost_"]) return NO;
-    // Plugin callbacks may arrive off the main thread or after their game has gone away.
-    dispatch_async(dispatch_get_main_queue(), ^{
-        CDVGameViewController *clone = self.clone;
-        NSString *prefix = [NSString stringWithFormat:@"CDVHost_%@_", clone.sessionID];
-        if (!clone || ![callbackId hasPrefix:prefix]) return;
-        NSString *requestID = [callbackId substringFromIndex:prefix.length];
-        NSNumber *stream = clone.requests[requestID];
-        if (!stream) return;
-        BOOL keep = result.keepCallback.boolValue;
-        if (result.status.intValue == CDVCommandStatus_NO_RESULT && keep) return;
-        if (!stream.boolValue || !keep) [clone.requests removeObjectForKey:requestID];
-        NSString *js = [NSString stringWithFormat:@"window.host._receive('%@',%d,%@,%@);", requestID, result.status.intValue, result.argumentsAsJSON, keep ? @"true" : @"false"];
-        [clone.webView evaluateJavaScript:js completionHandler:nil];
-    });
-    return YES;
-}
-
-- (void)receiveHostMessage:(NSDictionary *)body reply:(void (^)(id, NSString *))reply
-{
-    NSString *type = body[@"type"];
-    if (![type isKindOfClass:NSString.class]) { reply(nil, @"Missing host message type"); return; }
-    if ([type isEqualToString:@"plugins"]) { reply([self loadedPluginsForClone], nil); return; }
-    if ([type isEqualToString:@"message"]) { [self emitCloneEvent:@"message" detail:body[@"message"]]; reply(@YES, nil); return; }
-    NSString *requestID = body[@"id"];
-    if (![requestID isKindOfClass:NSString.class] || requestID.length == 0 || requestID.length > 16 || [requestID rangeOfCharacterFromSet:NSCharacterSet.decimalDigitCharacterSet.invertedSet].location != NSNotFound) {
-        reply(nil, @"Invalid host request ID"); return;
-    }
-    if ([type isEqualToString:@"cancel"]) { [self.clone.requests removeObjectForKey:requestID]; reply(@YES, nil); return; }
-    NSString *service = body[@"service"], *action = body[@"action"];
-    NSArray *args = body[@"args"];
-    if (![type isEqualToString:@"plugin"] || ![service isKindOfClass:NSString.class] || !service.length || ![action isKindOfClass:NSString.class] || !action.length || ![args isKindOfClass:NSArray.class] || ![body[@"stream"] isKindOfClass:NSNumber.class]) {
-        reply(nil, @"Expected service, action, args array and stream flag"); return;
-    }
-    NSString *callbackID = [NSString stringWithFormat:@"CDVHost_%@_%@", self.clone.sessionID, requestID];
-    self.clone.requests[requestID] = body[@"stream"];
-    CDVInvokedUrlCommand *command = [[CDVInvokedUrlCommand alloc] initWithArguments:args callbackId:callbackID className:service methodName:action];
-    if (![self.commandQueue execute:command]) {
-        [self.clone.requests removeObjectForKey:requestID];
-        reply(nil, @"Plugin service or action not found");
-        return;
-    }
-    reply(@YES, nil);
-}
-
-- (void)postMessageToWebViewClone:(id)message completionHandler:(void (^)(NSError *))completionHandler
-{
-    if (![NSJSONSerialization isValidJSONObject:@[message ?: NSNull.null]]) {
-        if (completionHandler) completionHandler([NSError errorWithDomain:@"CDVHost" code:2 userInfo:@{NSLocalizedDescriptionKey: @"Message must be JSON-compatible"}]);
-        return;
-    }
-    NSError *error;
-    NSData *data = [NSJSONSerialization dataWithJSONObject:@[message ?: NSNull.null] options:0 error:&error];
-    if (!data || !self.clone.webView) {
-        if (completionHandler) completionHandler(error ?: [NSError errorWithDomain:@"CDVHost" code:1 userInfo:@{NSLocalizedDescriptionKey: @"No loaded game webview"}]);
-        return;
-    }
-    NSString *json = [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
-    [self.clone.webView evaluateJavaScript:[NSString stringWithFormat:@"window.host._message((%@)[0]);", json] completionHandler:^(id result, NSError *error) {
-        if (completionHandler) completionHandler(error);
-    }];
-}
-
-- (void)showWebViewCloneWithLoadingScreenHTML:(NSString *)html baseURL:(NSURL *)baseURL completionHandler:(VoidCompletionHandler)completionHandler
-{
-    if (self.clone && !self.clone.cloneReady) {
-        [self showLoadingScreenWithHTML:html baseURL:baseURL];
-        self.loadingScreenForClone = YES;
-    }
-    [self showWebViewClone:completionHandler];
-}
-
-- (void)showWebViewClone:(VoidCompletionHandler)completionHandler
-{
-    if (!self.clone) {
-        if (completionHandler) completionHandler(NO);
-        return;
-    }
-    self.clonePresentationRequested = YES;
-    self.showWebViewCloneCompletionHandler = completionHandler;
-    if (!self.clone.view.superview) {
-        self.clone.view.frame = self.view.bounds;
-        self.clone.view.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
-        [self.view addSubview:self.clone.view];
-        [self.view sendSubviewToBack:self.clone.view];
-        [self.clone didMoveToParentViewController:self];
-    }
-    if (self.clone.cloneReady) {
-        if (self.loadingScreenForClone) [self hideLoadingScreen];
-        self.clone.view.hidden = NO;
-        [self.view bringSubviewToFront:self.clone.view];
-        self.showWebViewCloneCompletionHandler = nil;
-        if (completionHandler) completionHandler(YES);
-    }
-}
-
-- (BOOL)hideWebViewClone
-{
-    if (!self.clone) return NO;
-    if (self.loadingScreenForClone) [self hideLoadingScreen];
-    self.clonePresentationRequested = NO;
-    self.clone.viewIfLoaded.hidden = YES;
-    self.showWebViewCloneCompletionHandler = nil;
-    return YES;
-}
-
-- (BOOL)dismissWebViewClone
-{
-    if (!self.clone) return NO;
-    if (self.loadingScreenForClone) [self hideLoadingScreen];
-    CDVGameViewController *clone = self.clone;
-    [clone willMoveToParentViewController:nil];
-    [clone dispose];
-    self.cloneMessageHandler = nil;
-    [clone.viewIfLoaded removeFromSuperview];
-    [clone removeFromParentViewController];
-    self.clone = nil;
-    self.clonePresentationRequested = NO;
-    self.showWebViewCloneCompletionHandler = nil;
-    self.loadTaskInWebViewCloneCompletionHandler = nil;
-    return YES;
-}
-
-- (void)loadTaskInWebViewCloneWithJsCommand:(NSString* _Nonnull)jsCommand withCompletionHandler:(TaskCompletionHandler)completionHandler {
-    if (self.clone) {
-        self.loadTaskInWebViewCloneCompletionHandler = completionHandler;
-        [self.clone.webView evaluateJavaScript:jsCommand completionHandler:^(id result, NSError* error) {
-
-            // if we fail we don't care, we simply log for debugging
-            NSLog(@"loadTaskInWebViewCloneWithJsCommand result: %@, error? %@", result, error);
-        }];
-    }
-}
-
 - (void)showStatusBar:(BOOL)visible
 {
 #if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
@@ -1422,93 +1198,6 @@ API_AVAILABLE(ios(14.0))
 - (void)parseSettingsWithParser:(id <NSXMLParserDelegate>)delegate
 {
     [CDVConfigParser parseConfigFile:self.configFilePath withDelegate:delegate];
-}
-
-@end
-
-#pragma mark - CloneMessageHandler
-
-@implementation CloneMessageHandler
-
-- (instancetype)initWithViewController:(CDVViewController*)viewController {
-    self = [super init];
-    if (self) {
-        _viewController = viewController;
-    }
-    return self;
-}
-
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
-    CDVViewController *parent = self.viewController;
-    if (!parent || message.webView != parent.clone.webView) {
-        replyHandler(nil, @"The clone has been dismissed.");
-        return;
-    }
-    if (!message.frameInfo.isMainFrame) { replyHandler(nil, @"Host messages must come from the main frame"); return; }
-    if ([message.name isEqualToString:@"host"] && [message.body isKindOfClass:NSDictionary.class]) {
-        NSDictionary *hostBody = message.body;
-        if ([hostBody[@"type"] isEqual:@"ready"]) {
-            // Continue through the existing readiness handshake below.
-        } else {
-            [parent receiveHostMessage:hostBody reply:replyHandler];
-            return;
-        }
-    } else if (![message.name isEqualToString:@"webViewParent"] || ![message.body isKindOfClass:[NSDictionary class]]) {
-        replyHandler(nil, @"Invalid clone message.");
-        return;
-    }
-    NSDictionary *body = [message.name isEqualToString:@"host"] ? @{@"title": @"UP_AND_RUNNING"} : message.body;
-    NSString *title = body[@"title"];
-    if (![title isKindOfClass:[NSString class]]) {
-        replyHandler(nil, @"Missing clone message title.");
-    } else if ([title isEqualToString:@"UP_AND_RUNNING"]) {
-        parent.clone.cloneReady = YES;
-        VoidCompletionHandler completion = parent.showWebViewCloneCompletionHandler;
-        parent.showWebViewCloneCompletionHandler = nil;
-        if (parent.clonePresentationRequested) {
-            if (parent.loadingScreenForClone) [parent hideLoadingScreen];
-            parent.clone.view.hidden = NO;
-            [parent.view bringSubviewToFront:parent.clone.view];
-            if (completion) completion(YES);
-        }
-        replyHandler(@"OK", nil);
-    } else if ([title isEqualToString:@"TRAINING_TASK_FINISHED"]) {
-        TaskCompletionHandler completion = parent.loadTaskInWebViewCloneCompletionHandler;
-        parent.loadTaskInWebViewCloneCompletionHandler = nil;
-        if (completion) completion(body);
-        replyHandler(@"OK", nil);
-    } else if ([title isEqualToString:@"CALL_ASYNC"] && [body[@"script"] isKindOfClass:[NSString class]]) {
-        WKWebView *webView = (WKWebView *)parent.webView;
-        [webView callAsyncJavaScript:body[@"script"] arguments:nil inFrame:nil inContentWorld:WKContentWorld.pageWorld completionHandler:^(id result, NSError *error) {
-            replyHandler(result, error.localizedDescription);
-        }];
-    } else {
-        replyHandler(nil, @"Unknown clone message or invalid script.");
-    }
-}
-
-@end
-
-#pragma mark - WebViewWeakScriptMessageHandler
-
-@implementation WebViewWeakScriptMessageHandler
-
-- (instancetype)initWithScriptMessageHandler:(id<WKScriptMessageHandlerWithReply>)scriptMessageHandler
-{
-    self = [super init];
-    if (self) {
-        _scriptMessageHandler = scriptMessageHandler;
-    }
-    return self;
-}
-
-- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message replyHandler:(void (^)(id _Nullable, NSString * _Nullable))replyHandler {
-    id<WKScriptMessageHandlerWithReply> handler = self.scriptMessageHandler;
-    if (handler) {
-        [handler userContentController:userContentController didReceiveScriptMessage:message replyHandler:replyHandler];
-    } else {
-        replyHandler(nil, @"The clone message handler has been released.");
-    }
 }
 
 @end

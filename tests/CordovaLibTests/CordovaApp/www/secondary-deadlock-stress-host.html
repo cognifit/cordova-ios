@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Secondary scheme deadlock stress</title><style>pre{white-space:pre-wrap;overflow-wrap:anywhere}</style></head>
+<body>
+<h1>Secondary scheme deadlock stress</h1>
+<pre id="results">Waiting for deviceready…</pre>
+<script src="cordova.js"></script>
+<script>
+document.addEventListener('deviceready', async function () {
+    const results = document.getElementById('results');
+    const api = cordova.secondaryWebView;
+    let lastTick = performance.now();
+    let maxGap = 0;
+    let maxBridgeDelay = 0;
+    let probeStarted = 0;
+    let probePending = false;
+    let finished = false;
+    let failed = false;
+    let firstRound = false;
+    let destroyStarted = false;
+    let largeMessages = 0;
+    let invalidChecks = 0;
+    function write(line) { results.textContent += '\n' + line; }
+    const tick = setInterval(() => {
+        const now = performance.now();
+        const gap = now - lastTick;
+        maxGap = Math.max(maxGap, gap);
+        if (gap > 1000 && !failed) { failed = true; write('FAIL host JavaScript stall: ' + Math.round(gap) + ' ms'); }
+        lastTick = now;
+        if (probePending) {
+            if (now - probeStarted > 1000 && !failed) { failed = true; write('FAIL native main-thread bridge stalled over 1 s'); }
+            return;
+        }
+        probePending = true;
+        probeStarted = now;
+        api.getMetrics().then(() => {
+            const delay = performance.now() - probeStarted;
+            maxBridgeDelay = Math.max(maxBridgeDelay, delay);
+            if (delay > 1000 && !failed) { failed = true; write('FAIL native main-thread bridge delay: ' + Math.round(delay) + ' ms'); }
+            probePending = false;
+        }, error => { if (!finished) { failed = true; write('FAIL bridge probe: ' + JSON.stringify(error)); } probePending = false; });
+    }, 50);
+    const deadline = setTimeout(() => { failed = true; write('FAIL test exceeded 20 s'); }, 20000);
+    const off = api.onEvent(async event => {
+        if (event.type === 'ready') { write('Secondary ready.'); await api.post('stressStart'); }
+        if (event.type === 'loadFailed') { failed = true; write('FAIL loadFailed: ' + event.detail); }
+        if (event.type !== 'message' || !event.detail) return;
+        if (event.detail.name === 'stressLargeMessage') { if (event.detail.payload && event.detail.payload.data && event.detail.payload.data.length === 600000) largeMessages++; else { failed = true; write('FAIL large channel payload truncated'); } }
+        if (event.detail.name === 'stressInvalidTypes') { if (event.detail.payload && event.detail.payload.completed) invalidChecks++; else { failed = true; write('FAIL invalid input handling'); } }
+        if (event.detail.name === 'stressFirstRoundDone') {
+            firstRound = true;
+            write('First round: ' + JSON.stringify(event.detail.payload));
+            await api.post('stressStartDestroy');
+        }
+        if (event.detail.name === 'stressDestroyReady' && !destroyStarted) {
+            destroyStarted = true;
+            try {
+                let active = 0;
+                const until = performance.now() + 1000;
+                do {
+                    active = (await api.getMetrics()).activeSchemeTasks || 0;
+                    if (active > 0) break;
+                    await new Promise(resolve => setTimeout(resolve, 10));
+                } while (performance.now() < until);
+                if (!active) { failed = true; write('FAIL no active scheme task observed before destroy'); }
+                else write('Destroy requested with ' + active + ' active scheme tasks.');
+                await api.destroy();
+                write('Destroy completed after the second burst started.');
+                setTimeout(() => {
+                    finished = true; clearInterval(tick); clearTimeout(deadline); off();
+                    write((!failed && firstRound && largeMessages > 0 && invalidChecks > 0 ? 'PASS' : 'FAIL') + ' no main-thread stall over 1 s; max timer gap ' + Math.round(maxGap) + ' ms, max native bridge delay ' + Math.round(maxBridgeDelay) + ' ms');
+                }, 1500);
+            } catch (error) { failed = true; write('FAIL destroy: ' + JSON.stringify(error)); }
+        }
+    });
+    try {
+        results.textContent = 'Checking invalid create config…';
+        for (const invalid of [{telemetry: {counters: null}}, {hardwareAccelerated: null}, {assetReadTimeoutMs: null}]) {
+            try { await api.create({url: 'www/secondary-deadlock-stress.html', ...invalid}); failed = true; write('FAIL invalid config accepted: ' + JSON.stringify(invalid)); await api.destroy(); }
+            catch (error) { if (!error || error.code !== 'INVALID_CONFIG') { failed = true; write('FAIL invalid config error: ' + JSON.stringify(error)); } }
+        }
+        results.textContent = 'Running 200+ parallel image and XHR loads…';
+        await api.create({
+            url: 'www/secondary-deadlock-stress.html',
+            zOrder: 'above',
+            frame: {x: 0, y: innerHeight / 2, width: innerWidth, height: innerHeight / 2},
+            assetReadWatchdogMs: 5000
+        });
+    } catch (error) {
+        failed = true; write('FAIL create: ' + JSON.stringify(error));
+        clearInterval(tick); clearTimeout(deadline); off();
+    }
+}, {once: true});
+</script>
+</body>
+</html>

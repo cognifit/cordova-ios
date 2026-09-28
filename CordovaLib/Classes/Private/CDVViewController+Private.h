@@ -19,15 +19,12 @@
 
 #import <Cordova/CDVViewController.h>
 
-@class CDVPluginResult;
-
 NS_ASSUME_NONNULL_BEGIN
 
 @interface CDVViewController (Private)
 
 - (nullable NSURL *)webContentURL;
 - (BOOL)handleWebContentTermination;
-- (BOOL)routeHostPluginResult:(CDVPluginResult *)result callbackId:(NSString *)callbackId;
 
 - (void)setStatusBarWebViewColor:(UIColor *)color;
 
