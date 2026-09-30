@@ -22,6 +22,7 @@
 #import "CDVTestHelpers.h"
 #import <Cordova/CDVPlugin.h>
 #import <Cordova/CDVViewController.h>
+#import "CDVViewController+Private.h"
 #import <Cordova/CDVPluginNotifications.h>
 
 #define CDVViewControllerTestSettingKey @"test_cdvconfigfile"
@@ -241,5 +242,24 @@
     XCTAssertFalse(controller.isViewLoaded);
 }
 
-@end
+- (void)testSecondaryChannelValidation
+{
+    CDVViewController *controller = [self viewController];
+    controller.startPage = @"secondary-channel-validation-host.html";
+    [controller loadViewIfNeeded];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:45];
+    __block NSArray *state = nil;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"secondary channel result"];
+        [controller.webViewEngine evaluateJavaScript:@"[document.title, document.getElementById('results')?.textContent || '']" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSArray.class]) state = result;
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([state.firstObject hasPrefix:@"PASS secondary channel"] || [state.firstObject hasPrefix:@"FAIL secondary channel"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    XCTAssertEqualObjects(state.firstObject, @"PASS secondary channel validation", @"%@", state.count > 1 ? state[1] : @"No test result");
+}
 
+@end
