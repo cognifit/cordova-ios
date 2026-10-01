@@ -267,6 +267,7 @@
 - (void)testSecondaryNativeStreams
 {
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeBurst"], 0);
     [CDVSecondaryWebViewStreams pushSample:@1 streamName:@"nativeBurst"];
     CDVViewController *controller = [self viewController];
     controller.startPage = @"secondary-streams-host.html";
@@ -284,15 +285,23 @@
     XCTAssertTrue([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
     XCTAssertTrue([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"missing"]);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"missing"], 0);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeRate"], 1);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeFast"], 30);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeBurst"], 60);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeBatchOnly"], 20);
 
+    __block double backgroundRate = 0;
     XCTestExpectation *produced = [self expectationWithDescription:@"background producer"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        backgroundRate = [CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeFast"];
         [CDVSecondaryWebViewStreams pushSample:@{ @"value": @(NAN) } streamName:@"nativeBurst"];
         for (NSInteger i = 1; i <= 3; i++) [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeBurst"];
         for (NSInteger i = 0; i < 20; i++) [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeRate"];
         [produced fulfill];
     });
     [self waitForExpectations:@[produced] timeout:3];
+    XCTAssertEqual(backgroundRate, 30);
     __block NSDictionary *state = nil;
     deadline = [NSDate dateWithTimeIntervalSinceNow:10];
     while ([deadline timeIntervalSinceNow] > 0) {
@@ -305,6 +314,55 @@
     XCTAssertEqualObjects(state[@"burst"][@"latest"], @3);
     XCTAssertEqualObjects(state[@"burst"][@"batch"], (@[@1, @2, @3]));
     XCTAssertTrue([state[@"channelErrors"] containsObject:@"INVALID_JSON"]);
+    NSUInteger errorsBeforeFast = [state[@"channelErrors"] count];
+    [CDVSecondaryWebViewStreams pushSample:@1000 streamName:@"nativeFast"];
+    [CDVSecondaryWebViewStreams pushSample:@{ @"value": @(NAN) } streamName:@"nativeFast"];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    XCTestExpectation *droppedInvalid = [self expectationWithDescription:@"throttled invalid sample"];
+    [controller.webViewEngine evaluateJavaScript:@"window.streamState.channelErrors.length" completionHandler:^(id result, NSError *error) {
+        if (!error) XCTAssertEqual([result unsignedIntegerValue], errorsBeforeFast);
+        [droppedInvalid fulfill];
+    }];
+    [self waitForExpectations:@[droppedInvalid] timeout:3];
+    [CDVSecondaryWebViewStreams pushSample:@{ @"value": @(NAN) } streamName:@"nativeFast"];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"accepted invalid sample"];
+        [controller.webViewEngine evaluateJavaScript:@"window.streamState.channelErrors.length" completionHandler:^(id result, NSError *error) {
+            if (!error && [result unsignedIntegerValue] > errorsBeforeFast) state = @{ @"invalidReported": @YES };
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if (state[@"invalidReported"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    XCTAssertTrue([state[@"invalidReported"] boolValue]);
+    XCTestExpectation *fastProduced = [self expectationWithDescription:@"fast native producer"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (NSInteger i = 0; i < 50; i++) {
+            [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeFast"];
+            [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeBatchOnly"];
+            [NSThread sleepForTimeInterval:0.002];
+        }
+        [fastProduced fulfill];
+    });
+    [self waitForExpectations:@[fastProduced] timeout:5];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"batch completion"];
+        [controller.webViewEngine evaluateJavaScript:@"window.streamState" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSDictionary.class]) state = result;
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([state[@"batchValues"] count] == 50) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    NSMutableArray *expectedBatch = [NSMutableArray array];
+    for (NSInteger i = 0; i < 50; i++) [expectedBatch addObject:@(i)];
+    XCTAssertEqualObjects(state[@"batchValues"], expectedBatch);
+    XCTAssertGreaterThan([state[@"fastValues"] count], 0U);
+    XCTAssertLessThanOrEqual([state[@"fastValues"] count], 8U);
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
     XCTestExpectation *rate = [self expectationWithDescription:@"rate cap"];
     [controller.webViewEngine evaluateJavaScript:@"window.streamState.rateCount" completionHandler:^(id result, NSError *error) { if (!error) XCTAssertEqual([result integerValue], 1); [rate fulfill]; }];
@@ -312,6 +370,8 @@
     [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeFast"], 0);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeBatchOnly"], 0);
     [CDVSecondaryWebViewStreams pushSample:@4 streamName:@"nativeBurst"];
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     XCTestExpectation *discarded = [self expectationWithDescription:@"unsubscribed push"];
@@ -339,6 +399,8 @@
     XCTAssertTrue(destroyDone);
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeBurst"], 0);
+    XCTAssertEqual([CDVSecondaryWebViewStreams maximumRateHzForStream:@"nativeRate"], 0);
     [CDVSecondaryWebViewStreams pushSample:@5 streamName:@"nativeBurst"];
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
 }

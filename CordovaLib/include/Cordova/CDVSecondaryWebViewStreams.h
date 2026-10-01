@@ -8,4 +8,5 @@
 @interface CDVSecondaryWebViewStreams : NSObject
 + (void)pushSample:(id)sample streamName:(NSString *)name;
 + (BOOL)hasSubscriberForStream:(NSString *)name;
++ (double)maximumRateHzForStream:(NSString *)name;
 @end

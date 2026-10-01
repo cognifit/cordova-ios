@@ -23,11 +23,17 @@ static NSString *const CDVSecondaryScheme = @"secondary-content";
 static NSString *const CDVSecondaryContentPolicy = @"default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-src 'self'; form-action 'self'; object-src 'none'";
 static NSUInteger const CDVSecondaryMaxMessageBytes = 1024 * 1024;
 
-static NSMapTable<CDVSecondaryWebView *, NSSet<NSString *> *> *CDVSecondaryStreamRegistry(void) {
-    static NSMapTable<CDVSecondaryWebView *, NSSet<NSString *> *> *registry;
+static NSMapTable<CDVSecondaryWebView *, NSDictionary<NSString *, NSDictionary *> *> *CDVSecondaryStreamRegistry(void) {
+    static NSMapTable<CDVSecondaryWebView *, NSDictionary<NSString *, NSDictionary *> *> *registry;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ registry = [NSMapTable weakToStrongObjectsMapTable]; });
     return registry;
+}
+static NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *CDVSecondaryStreamRateGates(void) {
+    static NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *gates;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ gates = [NSMutableDictionary dictionary]; });
+    return gates;
 }
 static id CDVSecondaryStreamSnapshot(id sample) {
     id value = sample ?: NSNull.null;
@@ -658,10 +664,22 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 - (void)rejectStreamSample { [self event:@"channelError" detail:@"INVALID_JSON"]; }
 - (void)refreshStreamNames {
     NSMutableSet *all = [NSMutableSet set], *batches = [NSMutableSet set];
-    for (NSDictionary *sub in self.subscriptions.allValues) { [all addObject:sub[@"streamName"]]; if ([sub[@"coalesce"] isEqual:@"batch"]) [batches addObject:sub[@"streamName"]]; }
+    NSMutableDictionary<NSString *, NSMutableDictionary *> *rates = [NSMutableDictionary dictionary];
+    for (NSDictionary *sub in self.subscriptions.allValues) {
+        NSString *name = sub[@"streamName"];
+        BOOL batch = [sub[@"coalesce"] isEqual:@"batch"];
+        [all addObject:name]; if (batch) [batches addObject:name];
+        NSMutableDictionary *info = rates[name];
+        if (!info) { info = [@{ @"rateHz": @0, @"batch": @NO } mutableCopy]; rates[name] = info; }
+        info[@"rateHz"] = @(MAX([info[@"rateHz"] doubleValue], [sub[@"rateHz"] doubleValue]));
+        if (batch) info[@"batch"] = @YES;
+    }
     self.subscribedStreamNames = all; self.batchStreamNames = batches;
     @synchronized ([CDVSecondaryWebViewStreams class]) {
-        if (self.secondary && !self.backgrounded && all.count) [CDVSecondaryStreamRegistry() setObject:[all copy] forKey:self];
+        NSDictionary *previous = [CDVSecondaryStreamRegistry() objectForKey:self];
+        for (NSString *name in previous) [CDVSecondaryStreamRateGates() removeObjectForKey:name];
+        for (NSString *name in rates) [CDVSecondaryStreamRateGates() removeObjectForKey:name];
+        if (self.secondary && !self.backgrounded && rates.count) [CDVSecondaryStreamRegistry() setObject:[rates copy] forKey:self];
         else [CDVSecondaryStreamRegistry() removeObjectForKey:self];
     }
 }
@@ -836,22 +854,50 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     if (![name isKindOfClass:NSString.class] || !name.length) return NO;
     @synchronized (self) {
         NSMapTable *registry = CDVSecondaryStreamRegistry();
-        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([[registry objectForKey:owner] containsObject:name]) return YES;
+        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([registry objectForKey:owner][name]) return YES;
     }
     return NO;
+}
++ (double)maximumRateHzForStream:(NSString *)name {
+    if (![name isKindOfClass:NSString.class] || !name.length) return 0;
+    double maximum = 0;
+    @synchronized (self) {
+        NSMapTable *registry = CDVSecondaryStreamRegistry();
+        for (CDVSecondaryWebView *owner in registry.keyEnumerator) maximum = MAX(maximum, [[registry objectForKey:owner][name][@"rateHz"] doubleValue]);
+    }
+    return maximum;
 }
 + (void)pushSample:(id)sample streamName:(NSString *)name {
     if (![name isKindOfClass:NSString.class] || !name.length) return;
     NSMutableArray<CDVSecondaryWebView *> *owners = nil;
+    double maximum = 0;
+    BOOL batch = NO;
+    NSMutableDictionary<NSString *, NSNumber *> *gate = nil;
     @synchronized (self) {
         NSMapTable *registry = CDVSecondaryStreamRegistry();
-        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([[registry objectForKey:owner] containsObject:name]) {
+        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([registry objectForKey:owner][name]) {
             if (!owners) owners = [NSMutableArray array];
             [owners addObject:owner];
+            NSDictionary *info = [registry objectForKey:owner][name];
+            maximum = MAX(maximum, [info[@"rateHz"] doubleValue]);
+            batch |= [info[@"batch"] boolValue];
+        }
+        if (owners.count && !batch) {
+            gate = CDVSecondaryStreamRateGates()[name];
+            if (!gate) { gate = [NSMutableDictionary dictionary]; CDVSecondaryStreamRateGates()[name] = gate; }
         }
     }
     if (!owners.count) return;
-    id snapshot = CDVSecondaryStreamSnapshot(sample);
+    id snapshot;
+    if (batch) snapshot = CDVSecondaryStreamSnapshot(sample);
+    else {
+        @synchronized (gate) {
+            NSTimeInterval now = CACurrentMediaTime();
+            if (now - [gate[@"lastAccepted"] doubleValue] < 1.0 / maximum) return;
+            snapshot = CDVSecondaryStreamSnapshot(sample);
+            if (snapshot) gate[@"lastAccepted"] = @(now);
+        }
+    }
     dispatch_async(dispatch_get_main_queue(), ^{
         for (CDVSecondaryWebView *owner in owners) {
             if (snapshot) [owner enqueueStreamSample:snapshot streamName:name];
