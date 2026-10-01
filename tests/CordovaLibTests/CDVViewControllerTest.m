@@ -31,6 +31,12 @@
 #define CDVViewControllerTestSettingValueDefault @"config.xml"
 #define CDVViewControllerTestSettingValueCustom @"config-custom.xml"
 
+// Internal clock seam for deterministic producer-gate tests; not part of the public API.
+@interface CDVSecondaryStreamRateGate : NSObject
+- (BOOL)reserveAtTime:(NSTimeInterval)now rateHz:(double)rateHz;
+- (void)finishValid:(BOOL)valid;
+@end
+
 @interface CDVViewControllerTest : XCTestCase
 
 @end
@@ -264,6 +270,50 @@
     XCTAssertEqualObjects(state.firstObject, @"PASS secondary channel validation", @"%@", state.count > 1 ? state[1] : @"No test result");
 }
 
+- (void)testSecondaryStreamRateGate
+{
+    CDVSecondaryStreamRateGate *gate = [CDVSecondaryStreamRateGate new];
+    XCTAssertTrue([gate reserveAtTime:1 rateHz:20]);
+    [gate finishValid:YES];
+    XCTAssertFalse([gate reserveAtTime:1 + 0.89 / 20 rateHz:20]);
+    XCTAssertTrue([gate reserveAtTime:1 + 0.91 / 20 rateHz:20]);
+    [gate finishValid:NO]; // An invalid accepted sample leaves the slot free.
+    XCTAssertTrue([gate reserveAtTime:1 + 0.91 / 20 rateHz:20]);
+    [gate finishValid:YES];
+
+    gate = [CDVSecondaryStreamRateGate new];
+    NSTimeInterval now = 1;
+    NSUInteger accepted = 0;
+    for (NSUInteger i = 0; i < 20; i++) {
+        if ([gate reserveAtTime:now rateHz:20]) { accepted++; [gate finishValid:YES]; }
+        now += (i % 2 ? 0.94 : 1.06) / 20;
+    }
+    XCTAssertEqual(accepted, 20U);
+
+    gate = [CDVSecondaryStreamRateGate new]; now = 1; accepted = 0;
+    for (NSUInteger i = 0; i < 40; i++) {
+        if ([gate reserveAtTime:now rateHz:20]) { accepted++; [gate finishValid:YES]; }
+        now += 0.5 / 20;
+    }
+    XCTAssertGreaterThanOrEqual(accepted, 19U);
+    XCTAssertLessThanOrEqual(accepted, 21U);
+
+    gate = [CDVSecondaryStreamRateGate new];
+    __block NSUInteger concurrentAccepted = 0;
+    dispatch_group_t group = dispatch_group_create();
+    for (NSUInteger i = 0; i < 2; i++) {
+        dispatch_group_async(group, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+            if ([gate reserveAtTime:1 rateHz:20]) {
+                @synchronized (gate) { concurrentAccepted++; }
+                [NSThread sleepForTimeInterval:0.01];
+                [gate finishValid:YES];
+            }
+        });
+    }
+    XCTAssertEqual(dispatch_group_wait(group, dispatch_time(DISPATCH_TIME_NOW, 2 * NSEC_PER_SEC)), 0);
+    XCTAssertEqual(concurrentAccepted, 1U);
+}
+
 - (void)testSecondaryNativeStreams
 {
     XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
@@ -337,6 +387,20 @@
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
     }
     XCTAssertTrue([state[@"invalidReported"] boolValue]);
+    [CDVSecondaryWebViewStreams pushSample:@2000 streamName:@"nativeFast"];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"valid sample after invalid"];
+        [controller.webViewEngine evaluateJavaScript:@"window.streamState.fastValues" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSArray.class]) state = @{ @"fastValues": result };
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([state[@"fastValues"] containsObject:@2000]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    XCTAssertTrue([state[@"fastValues"] containsObject:@2000]);
+    NSUInteger fastBefore = [state[@"fastValues"] count];
     XCTestExpectation *fastProduced = [self expectationWithDescription:@"fast native producer"];
     dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         for (NSInteger i = 0; i < 50; i++) {
@@ -361,8 +425,31 @@
     NSMutableArray *expectedBatch = [NSMutableArray array];
     for (NSInteger i = 0; i < 50; i++) [expectedBatch addObject:@(i)];
     XCTAssertEqualObjects(state[@"batchValues"], expectedBatch);
-    XCTAssertGreaterThan([state[@"fastValues"] count], 0U);
-    XCTAssertLessThanOrEqual([state[@"fastValues"] count], 8U);
+    XCTAssertGreaterThan([state[@"fastValues"] count], fastBefore);
+    XCTAssertLessThanOrEqual([state[@"fastValues"] count] - fastBefore, 8U);
+    XCTestExpectation *paced = [self expectationWithDescription:@"paced native producer"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        for (NSInteger i = 0; i < 20; i++) {
+            [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeJitter"];
+            [NSThread sleepForTimeInterval:(i % 2 ? 0.047 : 0.053)];
+        }
+        for (NSInteger i = 0; i < 40; i++) {
+            [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeHalf"];
+            [NSThread sleepForTimeInterval:0.025];
+        }
+        [paced fulfill];
+    });
+    [self waitForExpectations:@[paced] timeout:5];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    XCTestExpectation *pacedResult = [self expectationWithDescription:@"paced stream counts"];
+    [controller.webViewEngine evaluateJavaScript:@"window.streamState" completionHandler:^(id result, NSError *error) {
+        if (!error && [result isKindOfClass:NSDictionary.class]) state = result;
+        [pacedResult fulfill];
+    }];
+    [self waitForExpectations:@[pacedResult] timeout:3];
+    XCTAssertGreaterThanOrEqual([state[@"jitterValues"] count], 17U);
+    XCTAssertLessThanOrEqual([state[@"halfValues"] count], 24U);
+    XCTAssertGreaterThanOrEqual([state[@"halfValues"] count], 16U);
     [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
     XCTestExpectation *rate = [self expectationWithDescription:@"rate cap"];
     [controller.webViewEngine evaluateJavaScript:@"window.streamState.rateCount" completionHandler:^(id result, NSError *error) { if (!error) XCTAssertEqual([result integerValue], 1); [rate fulfill]; }];

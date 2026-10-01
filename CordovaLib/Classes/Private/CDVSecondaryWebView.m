@@ -29,8 +29,37 @@ static NSMapTable<CDVSecondaryWebView *, NSDictionary<NSString *, NSDictionary *
     dispatch_once(&once, ^{ registry = [NSMapTable weakToStrongObjectsMapTable]; });
     return registry;
 }
-static NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *CDVSecondaryStreamRateGates(void) {
-    static NSMutableDictionary<NSString *, NSMutableDictionary<NSString *, NSNumber *> *> *gates;
+@interface CDVSecondaryStreamRateGate : NSObject
+- (BOOL)reserveAtTime:(NSTimeInterval)now rateHz:(double)rateHz;
+- (void)finishValid:(BOOL)valid;
+@end
+
+@implementation CDVSecondaryStreamRateGate {
+    NSCondition *_condition;
+    BOOL _inFlight;
+    NSTimeInterval _lastAccepted;
+    NSTimeInterval _reservedAt;
+}
+- (instancetype)init { if ((self = [super init])) _condition = [NSCondition new]; return self; }
+- (BOOL)reserveAtTime:(NSTimeInterval)now rateHz:(double)rateHz {
+    [_condition lock];
+    while (_inFlight) [_condition wait];
+    if (_lastAccepted != 0 && now - _lastAccepted < 0.9 / rateHz) { [_condition unlock]; return NO; }
+    _inFlight = YES; _reservedAt = now;
+    [_condition unlock];
+    return YES;
+}
+- (void)finishValid:(BOOL)valid {
+    [_condition lock];
+    if (valid) _lastAccepted = _reservedAt;
+    _inFlight = NO;
+    [_condition broadcast];
+    [_condition unlock];
+}
+@end
+
+static NSMutableDictionary<NSString *, CDVSecondaryStreamRateGate *> *CDVSecondaryStreamRateGates(void) {
+    static NSMutableDictionary<NSString *, CDVSecondaryStreamRateGate *> *gates;
     static dispatch_once_t once;
     dispatch_once(&once, ^{ gates = [NSMutableDictionary dictionary]; });
     return gates;
@@ -872,7 +901,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     NSMutableArray<CDVSecondaryWebView *> *owners = nil;
     double maximum = 0;
     BOOL batch = NO;
-    NSMutableDictionary<NSString *, NSNumber *> *gate = nil;
+    CDVSecondaryStreamRateGate *gate = nil;
     @synchronized (self) {
         NSMapTable *registry = CDVSecondaryStreamRegistry();
         for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([registry objectForKey:owner][name]) {
@@ -884,19 +913,16 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         }
         if (owners.count && !batch) {
             gate = CDVSecondaryStreamRateGates()[name];
-            if (!gate) { gate = [NSMutableDictionary dictionary]; CDVSecondaryStreamRateGates()[name] = gate; }
+            if (!gate) { gate = [CDVSecondaryStreamRateGate new]; CDVSecondaryStreamRateGates()[name] = gate; }
         }
     }
     if (!owners.count) return;
     id snapshot;
     if (batch) snapshot = CDVSecondaryStreamSnapshot(sample);
     else {
-        @synchronized (gate) {
-            NSTimeInterval now = CACurrentMediaTime();
-            if (now - [gate[@"lastAccepted"] doubleValue] < 1.0 / maximum) return;
-            snapshot = CDVSecondaryStreamSnapshot(sample);
-            if (snapshot) gate[@"lastAccepted"] = @(now);
-        }
+        if (![gate reserveAtTime:CACurrentMediaTime() rateHz:maximum]) return;
+        snapshot = CDVSecondaryStreamSnapshot(sample);
+        [gate finishValid:(snapshot != nil)];
     }
     dispatch_async(dispatch_get_main_queue(), ^{
         for (CDVSecondaryWebView *owner in owners) {
