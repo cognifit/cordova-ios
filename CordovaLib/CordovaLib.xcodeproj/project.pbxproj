@@ -158,6 +158,8 @@
 		CD6100000000000000000004 /* CDVSecondaryWebView.m in Sources */ = {isa = PBXBuildFile; fileRef = CD6100000000000000000002 /* CDVSecondaryWebView.m */; };
 		CD6100000000000000000005 /* CDVSecondaryWebView.h in Headers */ = {isa = PBXBuildFile; fileRef = CD6100000000000000000001 /* CDVSecondaryWebView.h */; settings = {ATTRIBUTES = (Public, ); }; };
 		CD6100000000000000000006 /* CDVSecondaryWebView.h in Headers */ = {isa = PBXBuildFile; fileRef = CD6100000000000000000001 /* CDVSecondaryWebView.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		CD6200000000000000000002 /* CDVSecondaryWebViewStreams.h in Headers */ = {isa = PBXBuildFile; fileRef = CD6200000000000000000001 /* CDVSecondaryWebViewStreams.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		CD6200000000000000000003 /* CDVSecondaryWebViewStreams.h in Headers */ = {isa = PBXBuildFile; fileRef = CD6200000000000000000001 /* CDVSecondaryWebViewStreams.h */; settings = {ATTRIBUTES = (Public, ); }; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -231,6 +233,7 @@
 		C0C01EB51E3911D50056E6CB /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		CD6100000000000000000001 /* CDVSecondaryWebView.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CDVSecondaryWebView.h; sourceTree = "<group>"; };
 		CD6100000000000000000002 /* CDVSecondaryWebView.m */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.objc; path = CDVSecondaryWebView.m; sourceTree = "<group>"; };
+		CD6200000000000000000001 /* CDVSecondaryWebViewStreams.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = CDVSecondaryWebViewStreams.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -409,6 +412,7 @@
 				7ED95D1D1AB9029B008C4574 /* CDVPlugin+Resources.h */,
 				7ED95D1F1AB9029B008C4574 /* CDVPlugin.h */,
 				CD6100000000000000000001 /* CDVSecondaryWebView.h */,
+				CD6200000000000000000001 /* CDVSecondaryWebViewStreams.h */,
 				9044ED522E67FEBB003B58ED /* CDVPluginNotifications.h */,
 				7ED95D211AB9029B008C4574 /* CDVPluginResult.h */,
 				9044ED4B2E67F80E003B58ED /* CDVSceneDelegate.h */,
@@ -458,6 +462,7 @@
 				C0C01EC41E39131A0056E6CB /* CDVPlugin+Resources.h in Headers */,
 				C0C01EC51E39131A0056E6CB /* CDVPlugin.h in Headers */,
 				CD6100000000000000000005 /* CDVSecondaryWebView.h in Headers */,
+				CD6200000000000000000002 /* CDVSecondaryWebViewStreams.h in Headers */,
 				C0C01EC61E39131A0056E6CB /* CDVPluginResult.h in Headers */,
 				C0C01EC71E39131A0056E6CB /* CDVScreenOrientationDelegate.h in Headers */,
 				4F56D836254A2EE10063F1D6 /* CDVWebViewEngine.h in Headers */,
@@ -502,6 +507,7 @@
 				7ED95D431AB9029B008C4574 /* CDVPlugin+Resources.h in Headers */,
 				7ED95D451AB9029B008C4574 /* CDVPlugin.h in Headers */,
 				CD6100000000000000000006 /* CDVSecondaryWebView.h in Headers */,
+				CD6200000000000000000003 /* CDVSecondaryWebViewStreams.h in Headers */,
 				90DE61742B8F11D300810C2E /* Cordova.h in Headers */,
 				7ED95D471AB9029B008C4574 /* CDVPluginResult.h in Headers */,
 				7ED95D491AB9029B008C4574 /* CDVScreenOrientationDelegate.h in Headers */,

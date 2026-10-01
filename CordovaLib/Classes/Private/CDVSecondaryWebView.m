@@ -3,6 +3,7 @@
  * work for additional information regarding copyright ownership.
  * The ASF licenses this file to you under the Apache License, Version 2.0. */
 #import <Cordova/CDVSecondaryWebView.h>
+#import <Cordova/CDVSecondaryWebViewStreams.h>
 #import <WebKit/WebKit.h>
 #import <QuartzCore/QuartzCore.h>
 #import <mach/mach_time.h>
@@ -21,6 +22,20 @@ static uint64_t CDVSecondaryNanoseconds(uint64_t ticks) {
 static NSString *const CDVSecondaryScheme = @"secondary-content";
 static NSString *const CDVSecondaryContentPolicy = @"default-src 'self' data: blob: 'unsafe-inline' 'unsafe-eval'; connect-src 'self'; frame-src 'self'; form-action 'self'; object-src 'none'";
 static NSUInteger const CDVSecondaryMaxMessageBytes = 1024 * 1024;
+
+static NSMapTable<CDVSecondaryWebView *, NSSet<NSString *> *> *CDVSecondaryStreamRegistry(void) {
+    static NSMapTable<CDVSecondaryWebView *, NSSet<NSString *> *> *registry;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ registry = [NSMapTable weakToStrongObjectsMapTable]; });
+    return registry;
+}
+static id CDVSecondaryStreamSnapshot(id sample) {
+    id value = sample ?: NSNull.null;
+    @try {
+        NSData *encoded = [NSJSONSerialization dataWithJSONObject:value options:NSJSONWritingFragmentsAllowed error:nil];
+        return encoded ? [NSJSONSerialization JSONObjectWithData:encoded options:NSJSONReadingFragmentsAllowed error:nil] : nil;
+    } @catch (NSException *exception) { return nil; }
+}
 
 static NSDictionary *CDVSecondaryError(NSString *code, NSString *message) {
     return @{ @"code": code, @"message": message ?: @"" };
@@ -363,6 +378,8 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 @property (nonatomic, strong) NSMutableDictionary<NSString *, id> *queuedLatest;
 @property (nonatomic, strong) NSMutableDictionary<NSString *, NSMutableArray *> *queuedBatch;
 @property (nonatomic) BOOL sampleDrainPosted;
+- (void)rejectStreamSample;
+- (void)enqueueStreamSample:(id)sample streamName:(NSString *)streamName;
 @end
 @implementation CDVSecondaryWebView {
     uint64_t _counters[14];
@@ -619,6 +636,13 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 }
 /// Native producers enqueue samples here. The display link sends at most one message per frame.
 - (void)pushSample:(id)sample streamName:(NSString *)streamName {
+    if (![NSThread isMainThread]) { dispatch_async(dispatch_get_main_queue(), ^{ [self pushSample:sample streamName:streamName]; }); return; }
+    if (!self.sessionId || self.backgrounded || ![self.subscribedStreamNames containsObject:streamName]) return;
+    id snapshot = CDVSecondaryStreamSnapshot(sample);
+    if (!snapshot) { [self rejectStreamSample]; return; }
+    [self enqueueStreamSample:snapshot streamName:streamName];
+}
+- (void)enqueueStreamSample:(id)sample streamName:(NSString *)streamName {
     if (!self.sessionId || self.backgrounded || ![self.subscribedStreamNames containsObject:streamName]) return;
     BOOL schedule = NO;
     @synchronized (self.queuedLatest) {
@@ -631,10 +655,15 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     }
     if (schedule) dispatch_async(dispatch_get_main_queue(), ^{ [self drainSamples]; });
 }
+- (void)rejectStreamSample { [self event:@"channelError" detail:@"INVALID_JSON"]; }
 - (void)refreshStreamNames {
     NSMutableSet *all = [NSMutableSet set], *batches = [NSMutableSet set];
     for (NSDictionary *sub in self.subscriptions.allValues) { [all addObject:sub[@"streamName"]]; if ([sub[@"coalesce"] isEqual:@"batch"]) [batches addObject:sub[@"streamName"]]; }
     self.subscribedStreamNames = all; self.batchStreamNames = batches;
+    @synchronized ([CDVSecondaryWebViewStreams class]) {
+        if (self.secondary && !self.backgrounded && all.count) [CDVSecondaryStreamRegistry() setObject:[all copy] forKey:self];
+        else [CDVSecondaryStreamRegistry() removeObjectForKey:self];
+    }
 }
 - (id)serializableSample:(id)value {
     return [value isKindOfClass:NSData.class] ? @{ @"__secondaryArrayBuffer": [value base64EncodedStringWithOptions:0] } : value;
@@ -800,4 +829,34 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 }
 - (void)destroy:(CDVInvokedUrlCommand *)command { [self teardown]; [self success:@{} callback:command.callbackId]; }
 - (void)dispose { [self teardown]; [NSNotificationCenter.defaultCenter removeObserver:self]; [super dispose]; }
+@end
+
+@implementation CDVSecondaryWebViewStreams
++ (BOOL)hasSubscriberForStream:(NSString *)name {
+    if (![name isKindOfClass:NSString.class] || !name.length) return NO;
+    @synchronized (self) {
+        NSMapTable *registry = CDVSecondaryStreamRegistry();
+        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([[registry objectForKey:owner] containsObject:name]) return YES;
+    }
+    return NO;
+}
++ (void)pushSample:(id)sample streamName:(NSString *)name {
+    if (![name isKindOfClass:NSString.class] || !name.length) return;
+    NSMutableArray<CDVSecondaryWebView *> *owners = nil;
+    @synchronized (self) {
+        NSMapTable *registry = CDVSecondaryStreamRegistry();
+        for (CDVSecondaryWebView *owner in registry.keyEnumerator) if ([[registry objectForKey:owner] containsObject:name]) {
+            if (!owners) owners = [NSMutableArray array];
+            [owners addObject:owner];
+        }
+    }
+    if (!owners.count) return;
+    id snapshot = CDVSecondaryStreamSnapshot(sample);
+    dispatch_async(dispatch_get_main_queue(), ^{
+        for (CDVSecondaryWebView *owner in owners) {
+            if (snapshot) [owner enqueueStreamSample:snapshot streamName:name];
+            else if (owner.sessionId && !owner.backgrounded && [owner.subscribedStreamNames containsObject:name]) [owner rejectStreamSample];
+        }
+    });
+}
 @end

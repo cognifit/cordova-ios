@@ -22,6 +22,8 @@
 #import "CDVTestHelpers.h"
 #import <Cordova/CDVPlugin.h>
 #import <Cordova/CDVViewController.h>
+#import <Cordova/CDVSecondaryWebViewStreams.h>
+#import <math.h>
 #import "CDVViewController+Private.h"
 #import <Cordova/CDVPluginNotifications.h>
 
@@ -260,6 +262,85 @@
         [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
     }
     XCTAssertEqualObjects(state.firstObject, @"PASS secondary channel validation", @"%@", state.count > 1 ? state[1] : @"No test result");
+}
+
+- (void)testSecondaryNativeStreams
+{
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    [CDVSecondaryWebViewStreams pushSample:@1 streamName:@"nativeBurst"];
+    CDVViewController *controller = [self viewController];
+    controller.startPage = @"secondary-streams-host.html";
+    [controller loadViewIfNeeded];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:20];
+    __block NSString *title = nil;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"stream readiness"];
+        [controller.webViewEngine evaluateJavaScript:@"document.title" completionHandler:^(id result, NSError *error) { if (!error) title = result; [sample fulfill]; }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([title hasPrefix:@"READY"] || [title hasPrefix:@"FAIL"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    XCTAssertEqualObjects(title, @"READY secondary streams");
+    XCTAssertTrue([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    XCTAssertTrue([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"missing"]);
+
+    XCTestExpectation *produced = [self expectationWithDescription:@"background producer"];
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        [CDVSecondaryWebViewStreams pushSample:@{ @"value": @(NAN) } streamName:@"nativeBurst"];
+        for (NSInteger i = 1; i <= 3; i++) [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeBurst"];
+        for (NSInteger i = 0; i < 20; i++) [CDVSecondaryWebViewStreams pushSample:@(i) streamName:@"nativeRate"];
+        [produced fulfill];
+    });
+    [self waitForExpectations:@[produced] timeout:3];
+    __block NSDictionary *state = nil;
+    deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"stream delivery"];
+        [controller.webViewEngine evaluateJavaScript:@"window.streamState" completionHandler:^(id result, NSError *error) { if (!error && [result isKindOfClass:NSDictionary.class]) state = result; [sample fulfill]; }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if (state[@"burst"] && [state[@"rateCount"] integerValue] > 0 && [state[@"channelErrors"] count] > 0) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    XCTAssertEqualObjects(state[@"burst"][@"latest"], @3);
+    XCTAssertEqualObjects(state[@"burst"][@"batch"], (@[@1, @2, @3]));
+    XCTAssertTrue([state[@"channelErrors"] containsObject:@"INVALID_JSON"]);
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.3]];
+    XCTestExpectation *rate = [self expectationWithDescription:@"rate cap"];
+    [controller.webViewEngine evaluateJavaScript:@"window.streamState.rateCount" completionHandler:^(id result, NSError *error) { if (!error) XCTAssertEqual([result integerValue], 1); [rate fulfill]; }];
+    [self waitForExpectations:@[rate] timeout:3];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationDidEnterBackgroundNotification object:nil];
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
+    [CDVSecondaryWebViewStreams pushSample:@4 streamName:@"nativeBurst"];
+    [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    XCTestExpectation *discarded = [self expectationWithDescription:@"unsubscribed push"];
+    [controller.webViewEngine evaluateJavaScript:@"window.streamState.burst.latest" completionHandler:^(id result, NSError *error) { if (!error) XCTAssertEqualObjects(result, @3); [discarded fulfill]; }];
+    [self waitForExpectations:@[discarded] timeout:3];
+    [NSNotificationCenter.defaultCenter postNotificationName:UIApplicationWillEnterForegroundNotification object:nil];
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    XCTestExpectation *destroyRequested = [self expectationWithDescription:@"secondary destroy requested"];
+    [controller.webViewEngine evaluateJavaScript:@"window.streamDestroyDone = false; cordova.secondaryWebView.destroy().then(() => { window.streamDestroyDone = true; }); true" completionHandler:^(id result, NSError *error) {
+        XCTAssertNil(error);
+        [destroyRequested fulfill];
+    }];
+    [self waitForExpectations:@[destroyRequested] timeout:5];
+    deadline = [NSDate dateWithTimeIntervalSinceNow:5];
+    __block BOOL destroyDone = NO;
+    while ([deadline timeIntervalSinceNow] > 0 && !destroyDone) {
+        XCTestExpectation *checked = [self expectationWithDescription:@"secondary destroy completion"];
+        [controller.webViewEngine evaluateJavaScript:@"window.streamDestroyDone" completionHandler:^(id result, NSError *error) {
+            if (!error) destroyDone = [result boolValue];
+            [checked fulfill];
+        }];
+        [self waitForExpectations:@[checked] timeout:3];
+        if (!destroyDone) [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+    }
+    XCTAssertTrue(destroyDone);
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeRate"]);
+    [CDVSecondaryWebViewStreams pushSample:@5 streamName:@"nativeBurst"];
+    XCTAssertFalse([CDVSecondaryWebViewStreams hasSubscriberForStream:@"nativeBurst"]);
 }
 
 @end
