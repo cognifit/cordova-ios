@@ -1,0 +1,77 @@
+<!doctype html>
+<!--
+#
+# Licensed to the Apache Software Foundation (ASF) under one
+# or more contributor license agreements.  See the NOTICE file
+# distributed with this work for additional information
+# regarding copyright ownership.  The ASF licenses this file
+# to you under the Apache License, Version 2.0 (the
+# "License"); you may not use this file except in compliance
+# with the License.  You may obtain a copy of the License at
+#
+#   http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing,
+# software distributed under the License is distributed on an
+# "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+# KIND, either express or implied.  See the License for the
+# specific language governing permissions and limitations
+# under the License.
+#
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secondary touch lifecycle test</title>
+<style>
+html, body { background: transparent; margin: 0; font: 18px sans-serif; }
+#dialog { position: absolute; top: 60px; left: 20px; right: 20px; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 3px 15px #777; }
+button { display: block; width: 100%; height: 60px; margin: 10px 0; }
+</style>
+<div id="dialog" role="dialog" aria-label="Main dialog">
+  <p id="ready">Waiting for secondary</p>
+  <button id="main">Tap main</button>
+  <button id="arm">Arm region update</button>
+  <button id="background">Arm background</button>
+  <button id="route">Route secondary</button>
+  <p id="mainTaps">Main taps: 0</p>
+  <p id="mainStarts">Main starts: 0</p>
+  <p id="mainCancels">Main cancels: 0</p>
+  <p id="secondaryTaps">Secondary taps: 0</p>
+  <p id="secondaryCancels">Secondary cancels: 0</p>
+</div>
+<script src="cordova.js"></script>
+<script>
+let taps = 0, starts = 0, cancels = 0, armed = false, backgroundArmed = false;
+const main = document.getElementById('main');
+main.addEventListener('click', () => { document.getElementById('mainTaps').textContent = 'Main taps: ' + (++taps); });
+main.addEventListener('touchcancel', () => { document.getElementById('mainCancels').textContent = 'Main cancels: ' + (++cancels); });
+main.addEventListener('touchstart', () => {
+    document.getElementById('mainStarts').textContent = 'Main starts: ' + (++starts);
+    if (backgroundArmed) {
+        backgroundArmed = false;
+        document.getElementById('background').textContent = 'Arm background';
+        setTimeout(() => window.webkit.messageHandlers.cordovaTesting.postMessage('secondaryTouchBackground'), 150);
+    }
+    if (!armed) return;
+    armed = false;
+    setTimeout(() => cordova.secondaryWebView.setTouchRegions({mode: 'all'}).then(() => { document.getElementById('ready').textContent = 'Region update applied'; }), 150);
+});
+document.getElementById('arm').onclick = () => { armed = true; document.getElementById('arm').textContent = 'Region update armed'; };
+document.getElementById('background').onclick = () => { backgroundArmed = true; document.getElementById('background').textContent = 'Background armed'; };
+document.getElementById('route').onclick = () => cordova.secondaryWebView.setTouchRegions({mode: 'all'});
+document.addEventListener('deviceready', async () => {
+    if (new URL(location.href).searchParams.has('control')) { document.getElementById('ready').textContent = 'Touch test ready'; return; }
+    const api = cordova.secondaryWebView;
+    api.onEvent(event => {
+        if (event.type === 'ready') document.getElementById('ready').textContent = 'Touch test ready';
+        if (event.type !== 'message') return;
+        if (event.detail.name === 'touchCounts') {
+            document.getElementById('secondaryTaps').textContent = 'Secondary taps: ' + event.detail.payload.taps;
+            document.getElementById('secondaryCancels').textContent = 'Secondary cancels: ' + event.detail.payload.cancels;
+        }
+        if (event.detail.name === 'routeMain') api.setTouchRegions({mode: 'none'});
+    });
+    try { await api.create({url: 'www/secondary-touch.html', zOrder: 'below', heartbeatMs: 0}); }
+    catch (error) { document.getElementById('ready').textContent = 'FAIL ' + JSON.stringify(error); }
+}, {once: true});
+</script>

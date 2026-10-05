@@ -19,6 +19,7 @@
 
 #import <XCTest/XCTest.h>
 #import <WebKit/WebKit.h>
+#import <UIKit/UIGestureRecognizerSubclass.h>
 #import "CDVTestHelpers.h"
 #import <Cordova/CDVPlugin.h>
 #import <Cordova/CDVViewController.h>
@@ -37,6 +38,23 @@
 - (void)finishValid:(BOOL)valid;
 @end
 
+// Exercise the private state machine separately from simulator input timing.
+@interface CDVSecondaryCancelGesture : UIGestureRecognizer
+@property (nonatomic, strong) NSMutableSet<UITouch *> *activeTouches;
+- (void)cancelActiveTouches;
+- (void)setTrackingEnabled:(BOOL)enabled;
+@end
+
+@interface CDVSecondaryCancelGestureProbe : CDVSecondaryCancelGesture
+@property (nonatomic) UIGestureRecognizerState lastRequestedState;
+@end
+@implementation CDVSecondaryCancelGestureProbe
+- (void)setState:(UIGestureRecognizerState)state {
+    self.lastRequestedState = state;
+    [super setState:state];
+}
+@end
+
 @interface CDVViewControllerTest : XCTestCase
 
 @end
@@ -50,6 +68,36 @@
 @end
 
 @implementation CDVViewControllerTest
+
+- (void)testSecondaryTouchCancellationLifecycle
+{
+    CDVSecondaryCancelGestureProbe *gesture = [CDVSecondaryCancelGestureProbe new];
+    NSSet<UITouch *> *touches = [NSSet setWithObject:[UITouch new]];
+    [gesture touchesBegan:touches withEvent:nil];
+    XCTAssertEqual(gesture.activeTouches.count, 1U);
+    [gesture reset];
+    XCTAssertEqual(gesture.activeTouches.count, 0U);
+
+    [gesture touchesBegan:touches withEvent:nil];
+    [gesture touchesEnded:touches withEvent:nil];
+    // Without a live UIKit event, the framework may reset immediately to Possible.
+    XCTAssertEqual(gesture.lastRequestedState, UIGestureRecognizerStateFailed);
+    [gesture setTrackingEnabled:YES];
+    XCTAssertEqual(gesture.state, UIGestureRecognizerStatePossible);
+    [gesture cancelActiveTouches];
+    XCTAssertEqual(gesture.state, UIGestureRecognizerStatePossible);
+
+    [gesture touchesBegan:touches withEvent:nil];
+    [gesture cancelActiveTouches];
+    XCTAssertEqual(gesture.lastRequestedState, UIGestureRecognizerStateRecognized);
+    XCTAssertEqual(gesture.activeTouches.count, 0U);
+    [gesture setTrackingEnabled:NO];
+    XCTAssertFalse(gesture.enabled);
+    XCTAssertEqual(gesture.activeTouches.count, 0U);
+    [gesture setTrackingEnabled:YES];
+    XCTAssertTrue(gesture.enabled);
+    XCTAssertEqual(gesture.state, UIGestureRecognizerStatePossible);
+}
 
 - (void)testCurrentWindowDoesNotLoadView
 {

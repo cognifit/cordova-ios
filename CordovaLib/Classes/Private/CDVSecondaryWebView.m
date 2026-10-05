@@ -140,13 +140,39 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 @interface CDVSecondaryCancelGesture : UIGestureRecognizer
 @property (nonatomic, strong) NSMutableSet<UITouch *> *activeTouches;
 - (void)cancelActiveTouches;
+- (void)setTrackingEnabled:(BOOL)enabled;
 @end
 @implementation CDVSecondaryCancelGesture
-- (instancetype)init { if ((self = [super initWithTarget:nil action:nil])) { _activeTouches = [NSMutableSet set]; self.cancelsTouchesInView = YES; } return self; }
+- (instancetype)init {
+    if ((self = [super initWithTarget:nil action:nil])) {
+        _activeTouches = [NSMutableSet set];
+        self.cancelsTouchesInView = YES;
+        self.delaysTouchesBegan = NO;
+        self.delaysTouchesEnded = NO;
+    }
+    return self;
+}
 - (void)touchesBegan:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self.activeTouches unionSet:touches]; }
-- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self.activeTouches minusSet:touches]; }
-- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self.activeTouches minusSet:touches]; }
-- (void)cancelActiveTouches { if (self.activeTouches.count) { self.state = UIGestureRecognizerStateRecognized; [self.activeTouches removeAllObjects]; } }
+- (void)touchesEnded:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event {
+    [self.activeTouches minusSet:touches];
+    if (!self.activeTouches.count && self.state == UIGestureRecognizerStatePossible) self.state = UIGestureRecognizerStateFailed;
+}
+- (void)touchesCancelled:(NSSet<UITouch *> *)touches withEvent:(UIEvent *)event { [self touchesEnded:touches withEvent:event]; }
+- (void)reset { [super reset]; [self.activeTouches removeAllObjects]; }
+// Keep tracking a held finger after WebKit recognizes a pan, so a region update
+// can still cancel it. Normal completion must fail rather than stay Possible.
+- (BOOL)canBePreventedByGestureRecognizer:(UIGestureRecognizer *)other { return NO; }
+- (void)cancelActiveTouches {
+    if (self.activeTouches.count && self.state == UIGestureRecognizerStatePossible) self.state = UIGestureRecognizerStateRecognized;
+    [self.activeTouches removeAllObjects];
+}
+- (void)setTrackingEnabled:(BOOL)enabled {
+    // UIKit resets the recognizer when disabled, including a recognized gesture
+    // whose touchesCancelled callback will no longer be delivered.
+    self.enabled = NO;
+    [self.activeTouches removeAllObjects];
+    self.enabled = enabled;
+}
 @end
 
 @interface CDVSecondaryReadLease : NSObject
@@ -389,7 +415,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
 @interface CDVSecondaryWebView () <WKNavigationDelegate, WKScriptMessageHandlerWithReply>
 @property (nonatomic, strong) WKWebView *secondary;
 @property (nonatomic, strong) CDVSecondaryTouchView *touchView;
-@property (nonatomic, strong) CDVSecondaryCancelGesture *touchCancellation;
+@property (nonatomic, copy) NSArray<CDVSecondaryCancelGesture *> *touchCancellations;
 @property (nonatomic, strong) CDVSecondaryContent *content;
 @property (nonatomic, copy) NSString *sessionId;
 @property (nonatomic, copy) NSString *eventCallbackId;
@@ -609,8 +635,12 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     self.touchView.secondary = self.secondary;
     self.touchView.main = main;
     [self.viewController.view addSubview:self.touchView];
-    self.touchCancellation = [[CDVSecondaryCancelGesture alloc] init];
-    [self.viewController.view addGestureRecognizer:self.touchCancellation];
+    // Scope cancellation to the web views; do not compete on their shared parent.
+    CDVSecondaryCancelGesture *mainCancellation = [CDVSecondaryCancelGesture new];
+    CDVSecondaryCancelGesture *secondaryCancellation = [CDVSecondaryCancelGesture new];
+    [main addGestureRecognizer:mainCancellation];
+    [self.secondary addGestureRecognizer:secondaryCancellation];
+    self.touchCancellations = @[mainCancellation, secondaryCancellation];
     self.eventCallbackId = command.callbackId;
     @synchronized (self) { memset(_counters, 0, sizeof(_counters)); memset(_histograms, 0, sizeof(_histograms)); for (NSUInteger i = 0; i < 64; i++) _pendingIds[i] = nil; _pendingCursor = 0; }
     @synchronized (self.traces) { [self.traces removeAllObjects]; }
@@ -640,7 +670,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         if (!valid || !r[@"width"] || !r[@"height"] || [r[@"width"] doubleValue] < 0 || [r[@"height"] doubleValue] < 0) { [self error:@"INVALID_CONFIG" message:@"Invalid touch rectangle" callback:command.callbackId]; return; }
         [rects addObject:[NSValue valueWithCGRect:CGRectMake([r[@"x"] doubleValue], [r[@"y"] doubleValue], [r[@"width"] doubleValue], [r[@"height"] doubleValue])]];
     }
-    [self.touchCancellation cancelActiveTouches];
+    for (CDVSecondaryCancelGesture *gesture in self.touchCancellations) [gesture cancelActiveTouches];
     self.touchView.rects = rects; self.touchView.mode = nextMode;
     [self success:@{} callback:command.callbackId];
 }
@@ -836,8 +866,8 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         if (CACurrentMediaTime() - self.lastHeartbeat > self.heartbeatMs * 3 / 1000.0 && !self.unresponsive) { self.unresponsive = YES; [self record:@"hangs" amount:1]; [self event:@"unresponsive" detail:nil]; }
     }];
 }
-- (void)background { self.backgrounded = YES; [self.heartbeat invalidate]; self.heartbeat = nil; [self.subscriptions removeAllObjects]; [self refreshStreamNames]; @synchronized (self.queuedLatest) { [self.queuedLatest removeAllObjects]; [self.queuedBatch removeAllObjects]; } [self.displayLink invalidate]; self.displayLink = nil; }
-- (void)foreground { self.backgrounded = NO; self.lastHeartbeat = CACurrentMediaTime(); if (self.secondary && self.heartbeatMs > 0) [self startHeartbeat]; }
+- (void)background { for (CDVSecondaryCancelGesture *gesture in self.touchCancellations) [gesture setTrackingEnabled:NO]; self.backgrounded = YES; [self.heartbeat invalidate]; self.heartbeat = nil; [self.subscriptions removeAllObjects]; [self refreshStreamNames]; @synchronized (self.queuedLatest) { [self.queuedLatest removeAllObjects]; [self.queuedBatch removeAllObjects]; } [self.displayLink invalidate]; self.displayLink = nil; }
+- (void)foreground { for (CDVSecondaryCancelGesture *gesture in self.touchCancellations) [gesture setTrackingEnabled:YES]; self.backgrounded = NO; self.lastHeartbeat = CACurrentMediaTime(); if (self.secondary && self.heartbeatMs > 0) [self startHeartbeat]; }
 - (void)onMemoryWarning { [self event:@"memoryPressure" detail:nil]; }
 - (void)onAppTerminate { [self teardown]; }
 - (void)getMetrics:(CDVInvokedUrlCommand *)command {
@@ -868,7 +898,8 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     [self.secondary.configuration.userContentController removeScriptMessageHandlerForName:@"secondaryWebView" contentWorld:WKContentWorld.pageWorld];
     [self.secondary.configuration.userContentController removeAllUserScripts];
     [self.secondary removeFromSuperview]; [self.touchView removeFromSuperview];
-    [self.viewController.view removeGestureRecognizer:self.touchCancellation]; self.touchCancellation = nil;
+    for (CDVSecondaryCancelGesture *gesture in self.touchCancellations) [gesture.view removeGestureRecognizer:gesture];
+    self.touchCancellations = nil;
     self.touchView.secondary = nil; self.touchView.main = nil; self.touchView = nil; self.secondary = nil; self.content = nil;
     @synchronized (self.traces) { [self.traces removeAllObjects]; }
     self.perRequestEnabled = NO;

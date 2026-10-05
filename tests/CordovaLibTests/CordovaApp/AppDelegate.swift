@@ -33,7 +33,7 @@ import Cordova
     @objc func createViewController() {
         _viewController = ViewController()
         _viewController?.webContentFolderName = "www"
-        _viewController?.startPage = "index.html"
+        _viewController?.startPage = ProcessInfo.processInfo.environment["CDV_SECONDARY_TOUCH_UI_TEST"] == "1" ? "secondary-touch-host.html" + (ProcessInfo.processInfo.environment["CDV_TOUCH_CONTROL"] == "1" ? "?control=1" : "") : "index.html"
 
         testWindow?.rootViewController = _viewController
         testWindow?.makeKeyAndVisible()

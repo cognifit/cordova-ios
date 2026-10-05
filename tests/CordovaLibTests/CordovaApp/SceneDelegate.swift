@@ -33,6 +33,9 @@ class SceneDelegate: CDVSceneDelegate {
 
         if let appDelegate = (UIApplication.shared.delegate as? AppDelegate) {
             appDelegate.testWindow = window
+            if ProcessInfo.processInfo.environment["CDV_SECONDARY_TOUCH_UI_TEST"] == "1" {
+                appDelegate.createViewController()
+            }
         }
     }
 }

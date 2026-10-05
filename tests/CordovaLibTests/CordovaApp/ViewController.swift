@@ -22,6 +22,11 @@ import Cordova
 
 class DeviceReadyScriptHandler : NSObject, WKScriptMessageHandler {
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        if ProcessInfo.processInfo.environment["CDV_SECONDARY_TOUCH_UI_TEST"] == "1",
+           message.body as? String == "secondaryTouchBackground" {
+            UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
+            return
+        }
         NotificationCenter.default.post(name: NSNotification.Name("CDVTestingDeviceReadyFired"), object: nil)
     }
 }
@@ -31,6 +36,11 @@ class ViewController: CDVViewController {
         super.viewDidLoad()
 
         if let wkWebView = self.webView as? WKWebView {
+            if ProcessInfo.processInfo.environment["CDV_SECONDARY_TOUCH_UI_TEST"] == "1" {
+                wkWebView.isOpaque = false
+                wkWebView.backgroundColor = .clear
+                wkWebView.scrollView.backgroundColor = .clear
+            }
             let controller = wkWebView.configuration.userContentController
             let deviceReadyScriptHandler = DeviceReadyScriptHandler()
 
