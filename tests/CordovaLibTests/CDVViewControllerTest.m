@@ -298,6 +298,36 @@
     XCTAssertFalse(controller.isViewLoaded);
 }
 
+- (void)testSecondaryMediaAutoplayWithGestureBlockedWebAudioDefault
+{
+    CDVViewController *controller = [self viewController];
+    controller.startPage = @"secondary-autoplay-host.html";
+    // Media playback needs a visible view; other host-page tests can run detached.
+    UIWindowScene *scene = (UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previousKeyWindow = nil;
+    for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previousKeyWindow = candidate;
+    UIWindow *window = scene ? [[UIWindow alloc] initWithWindowScene:scene] : [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    window.rootViewController = controller;
+    [window makeKeyAndVisible];
+    [controller loadViewIfNeeded];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:45];
+    __block NSArray *state = nil;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"secondary autoplay result"];
+        [controller.webViewEngine evaluateJavaScript:@"[document.title, document.getElementById('results')?.textContent || '']" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSArray.class]) state = result;
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([state.firstObject hasPrefix:@"PASS secondary autoplay"] || [state.firstObject hasPrefix:@"FAIL secondary autoplay"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    window.hidden = YES;
+    window.rootViewController = nil;
+    [previousKeyWindow makeKeyWindow];
+    XCTAssertEqualObjects(state.firstObject, @"PASS secondary autoplay", @"%@", state.count > 1 ? state[1] : @"No test result");
+}
+
 - (void)testSecondaryChannelValidation
 {
     CDVViewController *controller = [self viewController];

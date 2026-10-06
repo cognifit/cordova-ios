@@ -525,7 +525,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     for (NSString *key in @[@"assetReadTimeoutMs", @"assetReadWatchdogMs", @"assetCacheMaxAgeSeconds", @"heartbeatMs"]) {
         if (config[key] && !CDVSecondaryIsInteger(config[key], 0, 31536000)) { [self error:@"INVALID_CONFIG" message:[NSString stringWithFormat:@"%@ must be an integer", key] callback:command.callbackId]; return; }
     }
-    for (NSString *key in @[@"opaque", @"followSymlinks"]) {
+    for (NSString *key in @[@"opaque", @"followSymlinks", @"allowMediaAutoplay"]) {
         if (config[key] && !CDVSecondaryIsBoolean(config[key])) { [self error:@"INVALID_CONFIG" message:[NSString stringWithFormat:@"%@ must be boolean", key] callback:command.callbackId]; return; }
     }
     NSDictionary *telemetryConfig = [config[@"telemetry"] isKindOfClass:NSDictionary.class] ? config[@"telemetry"] : @{};
@@ -604,6 +604,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     self.content.perRequest = self.perRequestEnabled;
     self.content.trace = ^(NSDictionary *event) { CDVSecondaryWebView *owner = weakSelf; if (!owner) return; @synchronized (owner.traces) { [owner.traces addObject:event]; } };
     WKWebViewConfiguration *webConfig = [[WKWebViewConfiguration alloc] init];
+    if ([config[@"allowMediaAutoplay"] boolValue]) webConfig.mediaTypesRequiringUserActionForPlayback = WKAudiovisualMediaTypeNone;
     webConfig.websiteDataStore = [storage isEqual:@"origin"] ? WKWebsiteDataStore.defaultDataStore : WKWebsiteDataStore.nonPersistentDataStore;
     [webConfig setURLSchemeHandler:self.content forURLScheme:CDVSecondaryScheme];
     NSString *script = [self bootstrap:self.sessionId heartbeat:heartbeat];
