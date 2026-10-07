@@ -298,6 +298,48 @@
     XCTAssertFalse(controller.isViewLoaded);
 }
 
+- (void)testSecondaryInlineMediaPlaybackDefaultsFalseAndEnablesInlineVideo
+{
+    CDVViewController *controller = [self viewController];
+    controller.startPage = @"secondary-inline-media-host.html?native=true";
+    // Media playback needs a visible view; other host-page tests can run detached.
+    UIWindowScene *scene = (UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previousKeyWindow = nil;
+    for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previousKeyWindow = candidate;
+    UIWindow *window = scene ? [[UIWindow alloc] initWithWindowScene:scene] : [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    window.rootViewController = controller;
+    [window makeKeyAndVisible];
+    [controller loadViewIfNeeded];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:45];
+    __block NSArray *state = nil;
+    NSInteger checkedIndex = -1;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"secondary inline media result"];
+        [controller.webViewEngine evaluateJavaScript:@"[document.title, document.getElementById('results')?.textContent || '', window.inlineConfigIndex ?? -1]" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSArray.class]) state = result;
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        NSInteger index = state.count > 2 ? [state[2] integerValue] : -1;
+        if (index >= 0 && index != checkedIndex) {
+            WKWebView *secondary = [[controller getCommandInstance:@"SecondaryWebView"] valueForKey:@"secondary"];
+            XCTAssertNotNil(secondary);
+            XCTAssertEqual(secondary.configuration.allowsInlineMediaPlayback, index == 2);
+            XCTAssertEqual(secondary.configuration.mediaTypesRequiringUserActionForPlayback, WKAudiovisualMediaTypeNone);
+            checkedIndex = index;
+            [controller.webViewEngine evaluateJavaScript:[NSString stringWithFormat:@"window.inlineConfigChecked = %ld", (long)index] completionHandler:nil];
+        }
+        if ([state.firstObject hasPrefix:@"PASS secondary inline media"] || [state.firstObject hasPrefix:@"FAIL secondary inline media"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    XCTAssertEqual(checkedIndex, 2);
+    XCTAssertNil(controller.presentedViewController);
+    window.hidden = YES;
+    window.rootViewController = nil;
+    [previousKeyWindow makeKeyWindow];
+    XCTAssertEqualObjects(state.firstObject, @"PASS secondary inline media", @"%@", state.count > 1 ? state[1] : @"No test result");
+}
+
 - (void)testSecondaryMediaAutoplayWithGestureBlockedWebAudioDefault
 {
     CDVViewController *controller = [self viewController];
