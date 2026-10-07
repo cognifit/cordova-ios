@@ -33,6 +33,32 @@
 #define CDVViewControllerTestSettingValueCustom @"config-custom.xml"
 
 // Internal clock seam for deterministic producer-gate tests; not part of the public API.
+@interface CDVSecondaryByteRange : NSObject
++ (NSDictionary *)parse:(NSString *)header size:(uint64_t)size;
+@end
+
+@interface CDVSecondaryContent : NSObject <WKURLSchemeHandler>
+@property (nonatomic, copy) NSArray<NSDictionary *> *roots;
+@property (nonatomic) NSInteger readLimit, availablePermits, cacheMaxAgeSeconds;
+@property (nonatomic) int64_t timeoutMs, watchdogMs;
+@property (nonatomic) BOOL perRequest;
+@property (nonatomic, copy) void (^record)(NSString *, uint64_t);
+@property (nonatomic, copy) void (^trace)(NSDictionary *);
+@end
+
+@interface CDVSecondaryRangeTask : NSObject <WKURLSchemeTask>
+@property (nonatomic, strong) NSURLRequest *request;
+@property (nonatomic, strong) NSHTTPURLResponse *response;
+@property (nonatomic, strong) NSMutableData *body;
+@property (nonatomic, strong) XCTestExpectation *finished;
+@end
+@implementation CDVSecondaryRangeTask
+- (void)didReceiveResponse:(NSURLResponse *)response { self.response = (NSHTTPURLResponse *)response; }
+- (void)didReceiveData:(NSData *)data { [self.body appendData:data]; }
+- (void)didFinish { [self.finished fulfill]; }
+- (void)didFailWithError:(NSError *)error { XCTFail(@"%@", error); [self.finished fulfill]; }
+@end
+
 @interface CDVSecondaryStreamRateGate : NSObject
 - (BOOL)reserveAtTime:(NSTimeInterval)now rateHz:(double)rateHz;
 - (void)finishValid:(BOOL)valid;
@@ -338,6 +364,91 @@
     window.rootViewController = nil;
     [previousKeyWindow makeKeyWindow];
     XCTAssertEqualObjects(state.firstObject, @"PASS secondary inline media", @"%@", state.count > 1 ? state[1] : @"No test result");
+}
+
+- (void)testSecondaryRangeSeeksSparseFileAndReleasesPermit
+{
+    NSString *directory = [NSTemporaryDirectory() stringByAppendingPathComponent:NSUUID.UUID.UUIDString];
+    XCTAssertTrue([NSFileManager.defaultManager createDirectoryAtPath:directory withIntermediateDirectories:YES attributes:nil error:nil]);
+    NSString *file = [directory stringByAppendingPathComponent:@"large.bin"];
+    XCTAssertTrue([NSFileManager.defaultManager createFileAtPath:file contents:NSData.data attributes:nil]);
+    NSFileHandle *output = [NSFileHandle fileHandleForWritingAtPath:file];
+    [output seekToFileOffset:4294967296ULL];
+    NSData *expected = [@"0123456789abcdef" dataUsingEncoding:NSUTF8StringEncoding];
+    [output writeData:expected]; [output closeFile];
+    CDVSecondaryContent *content = [CDVSecondaryContent new];
+    content.roots = @[@{@"path": directory, @"kind": @"file"}];
+    content.readLimit = 1; content.availablePermits = 1; content.timeoutMs = 5000; content.watchdogMs = 60000; content.cacheMaxAgeSeconds = 3600;
+    __block NSUInteger reads = 0;
+    __block NSDictionary *trace;
+    content.record = ^(NSString *name, uint64_t amount) { if ([name isEqual:@"assetReads"]) reads += amount; };
+    content.perRequest = YES; content.trace = ^(NSDictionary *value) { trace = value; };
+    CDVSecondaryRangeTask *task = [CDVSecondaryRangeTask new]; task.body = NSMutableData.data;
+    NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:@"secondary-content://localhost/r/0/large.bin"]];
+    [request setValue:@"bytes=4294967296-4294967311" forHTTPHeaderField:@"Range"]; task.request = request;
+    task.finished = [self expectationWithDescription:@"sparse range completes without reading 4 GiB"];
+    [content webView:nil startURLSchemeTask:task];
+    [self waitForExpectations:@[task.finished] timeout:10];
+    XCTAssertEqual(task.response.statusCode, 206);
+    XCTAssertEqualObjects([task.response valueForHTTPHeaderField:@"Content-Length"], @"16");
+    XCTAssertEqualObjects([task.response valueForHTTPHeaderField:@"Content-Range"], @"bytes 4294967296-4294967311/4294967312");
+    XCTAssertEqualObjects(task.body, expected);
+    XCTAssertEqual(reads, 1U); XCTAssertEqual(content.availablePermits, 1);
+    XCTAssertEqualObjects(trace[@"status"], @206); XCTAssertEqualObjects(trace[@"bytes"], @16);
+    [NSFileManager.defaultManager removeItemAtPath:directory error:nil];
+}
+
+- (void)testSecondaryByteRangeParsing
+{
+    NSArray *cases = @[
+        @[@"bytes=0-15", @1024, @206, @0, @16], @[@"bytes=1000-", @1024, @206, @1000, @24],
+        @[@"bytes=-16", @1024, @206, @1008, @16], @[@"bytes=-2000", @1024, @206, @0, @1024],
+        @[@"bytes=1016-2000", @1024, @206, @1016, @8], @[@"bytes=0-999999999999999999999", @1024, @206, @0, @1024],
+        @[@"bytes=4294967296-4294967311", @4294967312ULL, @206, @4294967296ULL, @16],
+        @[@"bytes=1024-", @1024, @416, @0, @0], @[@"bytes=-0", @1024, @416, @0, @0],
+        @[@"bytes=999999999999999999999-", @1024, @416, @0, @0], @[@"bytes=0-0", @0, @416, @0, @0],
+        @[@"bytes=0-1,4-5", @1024, @200, @0, @1024], @[@"bytes=broken", @1024, @200, @0, @1024],
+        @[@"bytes=9-3", @1024, @200, @0, @1024], @[@"items=0-15", @1024, @200, @0, @1024],
+        @[@"bytes=-", @1024, @200, @0, @1024], @[@"bytes=1.5-2", @1024, @200, @0, @1024], @[@"bytes=999999999999999999999-9223372036854775808", @1024, @200, @0, @1024], @[@"bytes=0-15\n", @1024, @200, @0, @1024]
+    ];
+    for (NSArray *item in cases) {
+        NSDictionary *range = [CDVSecondaryByteRange parse:item[0] size:[item[1] unsignedLongLongValue]];
+        XCTAssertEqualObjects(range[@"status"], item[2], @"%@", item[0]);
+        XCTAssertEqualObjects(range[@"start"], item[3], @"%@", item[0]);
+        XCTAssertEqualObjects(range[@"length"], item[4], @"%@", item[0]);
+    }
+    XCTAssertEqualObjects([CDVSecondaryByteRange parse:@"bytes=0-15" size:1024][@"contentRange"], @"bytes 0-15/1024");
+    XCTAssertEqualObjects([CDVSecondaryByteRange parse:@"bytes=1024-" size:1024][@"contentRange"], @"bytes */1024");
+}
+
+- (void)testSecondaryAssetRangesAndAllowedRootMP4Seeking
+{
+    CDVViewController *controller = [self viewController];
+    controller.startPage = @"secondary-ranges-host.html";
+    // Media playback needs a visible view; other host-page tests can run detached.
+    UIWindowScene *scene = (UIWindowScene *)UIApplication.sharedApplication.connectedScenes.anyObject;
+    UIWindow *previousKeyWindow = nil;
+    for (UIWindow *candidate in scene.windows) if (candidate.isKeyWindow) previousKeyWindow = candidate;
+    UIWindow *window = scene ? [[UIWindow alloc] initWithWindowScene:scene] : [[UIWindow alloc] initWithFrame:UIScreen.mainScreen.bounds];
+    window.rootViewController = controller;
+    [window makeKeyAndVisible];
+    [controller loadViewIfNeeded];
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:45];
+    __block NSArray *state = nil;
+    while ([deadline timeIntervalSinceNow] > 0) {
+        XCTestExpectation *sample = [self expectationWithDescription:@"secondary ranges result"];
+        [controller.webViewEngine evaluateJavaScript:@"[document.title, document.getElementById('results')?.textContent || '']" completionHandler:^(id result, NSError *error) {
+            if (!error && [result isKindOfClass:NSArray.class]) state = result;
+            [sample fulfill];
+        }];
+        [self waitForExpectations:@[sample] timeout:3];
+        if ([state.firstObject hasPrefix:@"PASS secondary ranges"] || [state.firstObject hasPrefix:@"FAIL secondary ranges"]) break;
+        [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.1]];
+    }
+    window.hidden = YES;
+    window.rootViewController = nil;
+    [previousKeyWindow makeKeyWindow];
+    XCTAssertEqualObjects(state.firstObject, @"PASS secondary ranges", @"%@", state.count > 1 ? state[1] : @"No test result");
 }
 
 - (void)testSecondaryMediaAutoplayWithGestureBlockedWebAudioDefault

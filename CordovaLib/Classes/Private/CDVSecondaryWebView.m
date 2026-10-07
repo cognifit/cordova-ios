@@ -104,7 +104,7 @@ static BOOL CDVSecondaryValidEnvelope(NSDictionary *body) {
         && (body[@"payload"] || ([kind isEqual:@"res"] && body[@"err"]));
 }
 static NSString *CDVSecondaryMime(NSString *extension) {
-    NSDictionary *types = @{ @"html": @"text/html", @"htm": @"text/html", @"css": @"text/css", @"js": @"application/javascript", @"mjs": @"application/javascript", @"wasm": @"application/wasm", @"json": @"application/json", @"svg": @"image/svg+xml", @"png": @"image/png", @"jpg": @"image/jpeg", @"jpeg": @"image/jpeg", @"webp": @"image/webp", @"woff": @"font/woff", @"woff2": @"font/woff2", @"txt": @"text/plain" };
+    NSDictionary *types = @{ @"html": @"text/html", @"htm": @"text/html", @"css": @"text/css", @"js": @"application/javascript", @"mjs": @"application/javascript", @"wasm": @"application/wasm", @"json": @"application/json", @"svg": @"image/svg+xml", @"png": @"image/png", @"jpg": @"image/jpeg", @"jpeg": @"image/jpeg", @"webp": @"image/webp", @"woff": @"font/woff", @"woff2": @"font/woff2", @"txt": @"text/plain", @"mp4": @"video/mp4", @"m4v": @"video/mp4", @"m4a": @"audio/mp4", @"mp3": @"audio/mpeg", @"wav": @"audio/wav", @"ogg": @"audio/ogg", @"webm": @"video/webm" };
     NSString *mime = types[extension.lowercaseString] ?: @"application/octet-stream";
     return [mime hasPrefix:@"text/"] || [@[@"application/javascript", @"application/json", @"image/svg+xml"] containsObject:mime]
         ? [mime stringByAppendingString:@"; charset=utf-8"] : mime;
@@ -172,6 +172,52 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     self.enabled = NO;
     [self.activeTouches removeAllObjects];
     self.enabled = enabled;
+}
+@end
+
+static uint64_t CDVSecondaryRangeDecimal(NSString *value) {
+    uint64_t result = 0;
+    for (NSUInteger i = 0; i < value.length; i++) {
+        unsigned digit = [value characterAtIndex:i] - '0';
+        if (result > (LLONG_MAX - digit) / 10) return LLONG_MAX;
+        result = result * 10 + digit;
+    }
+    return result;
+}
+// Internal parser seam used by native tests; not part of the plugin API.
+@interface CDVSecondaryByteRange : NSObject
++ (NSDictionary *)parse:(NSString *)header size:(uint64_t)size;
+@end
+@implementation CDVSecondaryByteRange
++ (NSDictionary *)parse:(NSString *)header size:(uint64_t)size {
+    NSDictionary *full = @{ @"status": @200, @"start": @0, @"length": @(size) };
+    if (!header) return full;
+    NSString *value = [header stringByTrimmingCharactersInSet:[NSCharacterSet characterSetWithCharactersInString:@" \t"]];
+    static NSRegularExpression *pattern;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ pattern = [NSRegularExpression regularExpressionWithPattern:@"^bytes=([0-9]*)-([0-9]*)$" options:NSRegularExpressionCaseInsensitive error:nil]; });
+    NSTextCheckingResult *match = [pattern firstMatchInString:value options:0 range:NSMakeRange(0, value.length)];
+    if (!match || match.range.length != value.length) return full;
+    NSString *first = [value substringWithRange:[match rangeAtIndex:1]], *last = [value substringWithRange:[match rangeAtIndex:2]];
+    if (!first.length && !last.length) return full;
+    uint64_t start, end;
+    NSDictionary *unsatisfiable = @{ @"status": @416, @"start": @0, @"length": @0, @"contentRange": [NSString stringWithFormat:@"bytes */%llu", size] };
+    if (!first.length) {
+        uint64_t suffix = CDVSecondaryRangeDecimal(last);
+        if (!suffix || !size) return unsatisfiable;
+        start = suffix >= size ? 0 : size - suffix; end = size - 1;
+    } else {
+        start = CDVSecondaryRangeDecimal(first); end = last.length ? CDVSecondaryRangeDecimal(last) : LLONG_MAX;
+        if (last.length) {
+            NSString *left = [last stringByReplacingOccurrencesOfString:@"^0+(?!$)" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, last.length)];
+            NSString *right = [first stringByReplacingOccurrencesOfString:@"^0+(?!$)" withString:@"" options:NSRegularExpressionSearch range:NSMakeRange(0, first.length)];
+            if (left.length < right.length || (left.length == right.length && [left compare:right] == NSOrderedAscending)) return full;
+        }
+        if (start >= size) return unsatisfiable;
+        end = MIN(end, size - 1);
+    }
+    return @{ @"status": @206, @"start": @(start), @"length": @(end - start + 1),
+        @"contentRange": [NSString stringWithFormat:@"bytes %llu-%llu/%llu", start, end, size] };
 }
 @end
 
@@ -260,7 +306,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, self.watchdogMs * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
         if ([lease expire]) [self deliverFailure:task url:url code:504 message:@"Asset read watchdog expired"];
     });
-    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [self serveURL:url task:task lease:lease]; });
+    dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{ [self serveURL:url task:task lease:lease range:request[@"range"] == NSNull.null ? nil : request[@"range"]]; });
 }
 - (void)webView:(WKWebView *)webView startURLSchemeTask:(id<WKURLSchemeTask>)task {
     NSAssert(NSThread.isMainThread, @"Scheme tasks must start on the main thread");
@@ -268,7 +314,7 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     NSURL *url = task.request.URL;
     [self.active addObject:task];
     [self.leases setObject:lease forKey:task];
-    NSDictionary *request = @{ @"task": task, @"url": url, @"lease": lease, @"queuedAt": @(mach_absolute_time()) };
+    NSDictionary *request = @{ @"task": task, @"url": url, @"lease": lease, @"queuedAt": @(mach_absolute_time()), @"range": [task.request.HTTPMethod isEqualToString:@"GET"] ? ([task.request valueForHTTPHeaderField:@"Range"] ?: (id)NSNull.null) : (id)NSNull.null };
     if (self.readLimit == 0 || self.availablePermits > 0) { [self startRead:request]; return; }
     [self.waiting addObject:request];
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, self.timeoutMs * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
@@ -331,6 +377,9 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     dispatch_async(dispatch_get_main_queue(), ^{ [self deliverFailure:task url:url code:code message:message]; });
 }
 - (void)deliverFailure:(id<WKURLSchemeTask>)task url:(NSURL *)url code:(NSInteger)code message:(NSString *)message {
+    [self deliverFailure:task url:url code:code message:message headers:@{}];
+}
+- (void)deliverFailure:(id<WKURLSchemeTask>)task url:(NSURL *)url code:(NSInteger)code message:(NSString *)message headers:(NSDictionary *)extraHeaders {
     NSAssert(NSThread.isMainThread, @"Scheme task callbacks must run on the main thread");
     if (![self.active containsObject:task]) return;
     NSString *path = url.path ?: @"";
@@ -339,19 +388,21 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         ? [[parts subarrayWithRange:NSMakeRange(3, parts.count - 3)] componentsJoinedByString:@"/"] : path;
     NSInteger rootIndex = parts.count >= 4 && [parts[1] isEqualToString:@"r"] && [[NSString stringWithFormat:@"%ld", (long)[parts[2] integerValue]] isEqualToString:parts[2]] ? [parts[2] integerValue] : -1;
     NSData *body = [message dataUsingEncoding:NSUTF8StringEncoding] ?: NSData.data;
-    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:url statusCode:code HTTPVersion:@"HTTP/1.1" headerFields:@{
+    NSMutableDictionary *headers = [@{
         @"Content-Type": @"text/plain; charset=utf-8", @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)body.length],
         @"Cache-Control": @"no-store", @"Content-Security-Policy": CDVSecondaryContentPolicy
-    }];
+    } mutableCopy];
+    [headers addEntriesFromDictionary:extraHeaders];
+    NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:url statusCode:code HTTPVersion:@"HTTP/1.1" headerFields:headers];
     if (self.record) self.record(code == 403 ? @"deniedPaths" : @"assetReadErrors", 1);
-    if (self.perRequest && self.trace) self.trace(@{ @"path": path, @"status": @(code), @"durationNs": @0 });
+    if (self.perRequest && self.trace) self.trace(@{ @"path": path, @"status": @(code), @"durationNs": @0, @"bytes": @(body.length) });
     NSLog(@"[SecondaryWebView] Asset request failed (%ld): %@ (path: %@)", (long)code, message, relativePath);
     [self reportAssetError:@{ @"sessionId": self.sessionId ?: @"", @"path": relativePath,
         @"rootIndex": @(rootIndex), @"status": @(code), @"reason": message ?: @"Asset request failed" }];
     if ([url isEqual:self.entryURL] && self.entryFailure) self.entryFailure(message);
     [self deliver:task response:response body:body];
 }
-- (void)serveURL:(NSURL *)url task:(id<WKURLSchemeTask>)task lease:(CDVSecondaryReadLease *)lease {
+- (void)serveURL:(NSURL *)url task:(id<WKURLSchemeTask>)task lease:(CDVSecondaryReadLease *)lease range:(NSString *)rangeHeader {
     NSArray<NSString *> *parts = [url.path componentsSeparatedByString:@"/"];
     if (![url.scheme isEqualToString:CDVSecondaryScheme] || ![url.host isEqualToString:@"localhost"] || parts.count < 4 || ![parts[1] isEqualToString:@"r"]) { [self fail:task url:url code:403 message:@"URL outside secondary content origin"]; return; }
     NSInteger index = [parts[2] integerValue];
@@ -370,9 +421,20 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         return;
     }
     struct stat info;
-    if (fstat(descriptor, &info) == 0 && S_ISDIR(info.st_mode)) {
+    if (fstat(descriptor, &info) != 0) {
+        close(descriptor); [self fail:task url:url code:500 message:@"Asset stat failed"]; return;
+    }
+    if (S_ISDIR(info.st_mode)) {
         close(descriptor);
         [self fail:task url:url code:404 message:@"Asset not found"];
+        return;
+    }
+    NSDictionary *range = [CDVSecondaryByteRange parse:rangeHeader size:(uint64_t)info.st_size];
+    NSInteger status = [range[@"status"] integerValue];
+    if (status == 416) {
+        close(descriptor);
+        if (self.record) self.record(@"assetReads", 1);
+        dispatch_async(dispatch_get_main_queue(), ^{ [self deliverFailure:task url:url code:416 message:@"Range Not Satisfiable" headers:@{ @"Accept-Ranges": @"bytes", @"Content-Range": range[@"contentRange"] }]; });
         return;
     }
     uint64_t readStart = mach_absolute_time();
@@ -380,12 +442,16 @@ static UIColor *CDVSecondaryColor(NSString *value) {
     NSMutableData *body = [NSMutableData data];
     int readError = 0;
     BOOL reachedEOF = NO;
-    while ([lease isValid]) {
+    uint64_t remaining = [range[@"length"] unsignedLongLongValue];
+    if (status == 206 && lseek(descriptor, (off_t)[range[@"start"] unsignedLongLongValue], SEEK_SET) < 0) readError = errno;
+    while (!readError && [lease isValid]) {
+        if (status == 206 && !remaining) { reachedEOF = YES; break; }
         uint8_t bytes[64 * 1024];
-        ssize_t count = read(descriptor, bytes, sizeof(bytes));
-        if (count == 0) { reachedEOF = YES; break; }
+        ssize_t count = read(descriptor, bytes, status == 206 ? (size_t)MIN(sizeof(bytes), remaining) : sizeof(bytes));
+        if (count == 0) { if (status == 206 && remaining) readError = EIO; else reachedEOF = YES; break; }
         if (count < 0) { if (errno == EINTR) continue; readError = errno; break; }
         [body appendBytes:bytes length:(NSUInteger)count];
+        remaining -= (uint64_t)count;
     }
     close(descriptor); // The reader alone owns and closes the descriptor, including on EOF.
     uint64_t duration = CDVSecondaryNanoseconds(mach_absolute_time() - readStart);
@@ -395,16 +461,19 @@ static UIColor *CDVSecondaryColor(NSString *value) {
         [self fail:task url:url code:status message:status == 403 ? @"Asset access denied" : status == 503 ? @"Too many open files" : status == 404 ? @"Asset not found" : @"Asset read failed"];
     } else if (reachedEOF && [lease markComplete]) {
         NSData *completeBody = [body copy];
-        NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:url statusCode:200 HTTPVersion:@"HTTP/1.1" headerFields:@{
+        NSMutableDictionary *headers = [@{
+            @"Accept-Ranges": @"bytes",
             @"Content-Type": CDVSecondaryMime(resolved.pathExtension),
             @"Content-Length": [NSString stringWithFormat:@"%lu", (unsigned long)completeBody.length],
             @"Cache-Control": [NSString stringWithFormat:@"private, max-age=%ld", (long)self.cacheMaxAgeSeconds],
             @"Content-Security-Policy": CDVSecondaryContentPolicy
-        }];
+        } mutableCopy];
+        if (status == 206) headers[@"Content-Range"] = range[@"contentRange"];
+        NSHTTPURLResponse *response = [[NSHTTPURLResponse alloc] initWithURL:url statusCode:status HTTPVersion:@"HTTP/1.1" headerFields:headers];
         dispatch_async(dispatch_get_main_queue(), ^{
             if ([lease hasExpired]) return;
             if ([self deliver:task response:response body:completeBody] && self.perRequest && self.trace)
-                self.trace(@{ @"path": url.path ?: @"", @"status": @200, @"durationNs": @(duration) });
+                self.trace(@{ @"path": url.path ?: @"", @"status": @(status), @"durationNs": @(duration), @"bytes": @(completeBody.length) });
         });
         queued = YES;
     }
