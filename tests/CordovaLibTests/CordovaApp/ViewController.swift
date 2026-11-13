@@ -27,7 +27,9 @@ class DeviceReadyScriptHandler : NSObject, WKScriptMessageHandler {
             UIApplication.shared.open(URL(string: UIApplication.openSettingsURLString)!)
             return
         }
-        NotificationCenter.default.post(name: NSNotification.Name("CDVTestingDeviceReadyFired"), object: nil)
+        // A previous controller may still finish loading after the next test starts.
+        // Let readiness expectations identify the web view they are waiting for.
+        NotificationCenter.default.post(name: NSNotification.Name("CDVTestingDeviceReadyFired"), object: message.webView)
     }
 }
 

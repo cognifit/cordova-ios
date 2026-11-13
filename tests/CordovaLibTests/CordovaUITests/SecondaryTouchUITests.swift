@@ -57,7 +57,7 @@ final class SecondaryTouchUITests: XCTestCase {
             app.buttons["Arm background"].tap()
             XCTAssertTrue(app.buttons["Background armed"].waitForExistence(timeout: 5))
             app.buttons["Tap main"].press(forDuration: 3)
-            XCTAssertEqual(app.state, .runningBackground)
+            XCTAssertTrue(app.wait(for: .runningBackground, timeout: 10))
             app.activate()
             Thread.sleep(forTimeInterval: 1)
             expect("Main starts: \(count * 2 - 1)")

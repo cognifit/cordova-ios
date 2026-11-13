@@ -43,6 +43,7 @@
 @property (nonatomic, readwrite) NSString *CDV_ASSETS_URL;
 @property (nonatomic, readwrite) Boolean cdvIsFileScheme;
 @property (nullable, nonatomic, strong, readwrite) WKWebViewConfiguration *configuration;
+@property (nonatomic, strong, readwrite) id <WKUIDelegate> uiDelegate;
 
 @end
 
@@ -282,7 +283,8 @@
     // CDVWebViewUIDelegate instance. This gives library consumers a way to
     // override the UI delegate and customize behaviour if needed.
     if ([self.viewController conformsToProtocol:@protocol(WKUIDelegate)]) {
-        wkWebView.UIDelegate = (id<WKUIDelegate>)self.viewController;
+        self.uiDelegate = (id<WKUIDelegate>)self.viewController;
+        wkWebView.UIDelegate = self.uiDelegate;
     } else {
         CDVWebViewUIDelegate *uiDelegate = [[CDVWebViewUIDelegate alloc] initWithViewController:self.viewController];
 
@@ -290,7 +292,11 @@
         uiDelegate.mediaPermissionGrantType = [self parsePermissionGrantType:[settings cordovaSettingForKey:@"MediaPermissionGrantType"]];
         uiDelegate.allowNewWindows = [settings cordovaBoolSettingForKey:@"AllowNewWindows" defaultValue:NO];
 
-        wkWebView.UIDelegate = uiDelegate;
+        // Assigning to self.uiDelegate keeps a strong reference to the delegate,
+        // since WKWebView.UIDelegate is weak and would cause the delegate to be
+        // deallocated
+        self.uiDelegate = uiDelegate;
+        wkWebView.UIDelegate = self.uiDelegate;
     }
 
     if ([self.viewController conformsToProtocol:@protocol(WKNavigationDelegate)]) {
@@ -313,6 +319,7 @@
 {
     WKWebView* wkWebView = (WKWebView*)_engineWebView;
     [wkWebView.configuration.userContentController removeScriptMessageHandlerForName:CDV_BRIDGE_NAME];
+    self.uiDelegate = nil;
     _engineWebView = nil;
 
     [super dispose];
@@ -439,7 +446,9 @@
     }
 
     if (uiDelegate && [uiDelegate conformsToProtocol:@protocol(WKUIDelegate)]) {
-        wkWebView.UIDelegate = uiDelegate;
+        // Keep a strong reference to the delegate, since WKWebView.UIDelegate is weak
+        self.uiDelegate = uiDelegate;
+        wkWebView.UIDelegate = self.uiDelegate;
     }
 
     if (settings && [settings isKindOfClass:[CDVSettingsDictionary class]]) {

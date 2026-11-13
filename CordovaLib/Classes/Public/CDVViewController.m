@@ -44,18 +44,21 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     id <CDVCommandDelegate> _commandDelegate;
     NSMutableDictionary<NSString *, CDVPlugin *> *_pluginObjects;
     NSMutableDictionary<NSString *, NSString *> *_pluginsMap;
-    CDVCommandQueue* _commandQueue;
+    CDVCommandQueue *_commandQueue;
     UIColor *_backgroundColor;
     UIColor *_splashBackgroundColor;
     UIColor *_statusBarBackgroundColor;
     UIColor *_statusBarWebViewColor;
     UIColor *_statusBarDefaultColor;
-    CDVSettingsDictionary* _settings;
+    BOOL _statusBarHidden;
+    CDVSettingsDictionary *_settings;
+    NSArray<NSLayoutConstraint *> *_topStatusBarConstraints;
+    NSArray<NSLayoutConstraint *> *_leftStatusBarConstraints;
+    NSArray<NSLayoutConstraint *> *_rightStatusBarConstraints;
 }
 
-@property (nonatomic, readwrite, strong) NSMutableArray* startupPluginNames;
+@property (nonatomic, readwrite, strong) NSMutableArray *startupPluginNames;
 @property (nonatomic, readwrite, strong) UIView *launchView;
-@property (nonatomic, readwrite, strong) UIView *statusBar;
 @property (nonatomic, readwrite, strong) UIView* backgroundView;
 
 @property (readwrite, assign) NSInteger loadCounter;
@@ -64,6 +67,7 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 @property (nonatomic, readwrite, copy) NSString *activeWebAppID;
 @property (nonatomic, readwrite, strong) id webAppContext;
 @property (nonatomic, copy) NSString *pendingPersistentWebAppID;
+@property (nonatomic, readwrite, strong) UIView *statusBarBackgroundView;
 @property (readwrite, assign) BOOL initialized;
 
 - (void)checkColdBootDeviceReadyInWebView:(WKWebView *)webView finalCheck:(BOOL)finalCheck;
@@ -191,14 +195,14 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 {
     _backgroundColor = color ?: defaultBackgroundColor();
 
-    [self.webView setBackgroundColor:self.backgroundColor];
+    self.webView.backgroundColor = self.backgroundColor;
 }
 
 - (void)setSplashBackgroundColor:(UIColor *)color
 {
     _splashBackgroundColor = color ?: self.backgroundColor;
 
-    [self.launchView setBackgroundColor:self.splashBackgroundColor];
+    self.launchView.backgroundColor = self.splashBackgroundColor;
 }
 
 - (UIColor *)statusBarBackgroundColor
@@ -225,14 +229,16 @@ static BOOL deviceReadyWatchdogReloaded = NO;
         _statusBarBackgroundColor = color;
     }
 
-    [self.statusBar setBackgroundColor:self.statusBarBackgroundColor];
+    self.statusBarBackgroundView.backgroundColor = self.statusBarBackgroundColor;
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 - (void)setStatusBarWebViewColor:(UIColor *)color
 {
     _statusBarWebViewColor = color;
 
-    [self.statusBar setBackgroundColor:self.statusBarBackgroundColor];
+    self.statusBarBackgroundView.backgroundColor = self.statusBarBackgroundColor;
+    [self setNeedsStatusBarAppearanceUpdate];
 }
 
 // Only for testing
@@ -429,8 +435,8 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     }
 
     // Instantiate the status bar
-    if (!self.statusBar) {
-        [self createStatusBarView];
+    if (!self.statusBarBackgroundView) {
+        [self createStatusBarBackgroundView];
     }
 
     // /////////////////
@@ -449,12 +455,12 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 
     [self loadStartPage];
 
-    [self.webView setBackgroundColor:self.backgroundColor];
-    [self.launchView setBackgroundColor:self.splashBackgroundColor];
-    [self.statusBar setBackgroundColor:self.statusBarBackgroundColor];
+    self.webView.backgroundColor = self.backgroundColor;
+    self.launchView.backgroundColor = self.splashBackgroundColor;
+    self.statusBarBackgroundView.backgroundColor = self.statusBarBackgroundColor;
 
     if (self.showInitialSplashScreen) {
-        [self.launchView setAlpha:1];
+        self.launchView.alpha = 1;
     }
 }
 
@@ -486,6 +492,9 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 
         if ([self.webView respondsToSelector:@selector(scrollView)]) {
             UIScrollView *scrollView = [self.webView performSelector:@selector(scrollView)];
+            // The web view is already constrained below the Mac Catalyst title bar,
+            // so disable UIKit's automatic safe-area inset adjustment. The status
+            // bar view is hidden for this mode in scrollViewDidChangeAdjustedContentInset:.
             scrollView.contentInsetAdjustmentBehavior = UIScrollViewContentInsetAdjustmentNever;
         }
     }
@@ -508,6 +517,30 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 
 -(void)viewWillLayoutSubviews
 {
+#if __IPHONE_OS_VERSION_MAX_ALLOWED >= 270100
+    if (@available(iOS 27.1, *)) {
+        if (self.traitCollection.verticalBarEdge == UIVerticalBarEdgeLeading) {
+            [NSLayoutConstraint deactivateConstraints:_topStatusBarConstraints];
+            [NSLayoutConstraint deactivateConstraints:_rightStatusBarConstraints];
+
+            [NSLayoutConstraint activateConstraints:_leftStatusBarConstraints];
+        } else if (self.traitCollection.verticalBarEdge == UIVerticalBarEdgeTrailing) {
+            [NSLayoutConstraint deactivateConstraints:_topStatusBarConstraints];
+            [NSLayoutConstraint deactivateConstraints:_leftStatusBarConstraints];
+
+            [NSLayoutConstraint activateConstraints:_rightStatusBarConstraints];
+        } else {
+            [NSLayoutConstraint deactivateConstraints:_rightStatusBarConstraints];
+            [NSLayoutConstraint deactivateConstraints:_leftStatusBarConstraints];
+            [NSLayoutConstraint activateConstraints:_topStatusBarConstraints];
+        }
+    }
+    else
+#endif
+    {
+        [NSLayoutConstraint activateConstraints:_topStatusBarConstraints];
+    }
+
     [super viewWillLayoutSubviews];
     [[NSNotificationCenter defaultCenter] postNotification:[NSNotification notificationWithName:CDVViewWillLayoutSubviewsNotification object:nil]];
 }
@@ -686,15 +719,29 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     }];
 }
 
+/**
+ * We use this delegate method on the web view's scrollView to detect when the safe area insets are changed
+ * by the viewport-fit value.
+ */
 - (void)scrollViewDidChangeAdjustedContentInset:(UIScrollView *)scrollView
 {
 #if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
     if (self.webView.hidden) {
-        self.statusBar.hidden = true;
+        self.statusBarBackgroundView.hidden = true;
         return;
     }
 
-    self.statusBar.hidden = (scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever);
+    // Detect changes on viewport-fit:
+    // viewport-fit=cover causes the contentInsetAdjustmentBehavior to be UIScrollViewContentInsetAdjustmentNever
+    //
+    // On Mac Catalyst, Cordova may manually constrain the web view below the title bar.
+    // In that case automatic scroll-view inset adjustment is disabled, so the synthetic
+    // status bar view should be hidden.
+    if (_statusBarHidden) {
+        self.statusBarBackgroundView.hidden = true;
+    } else {
+        self.statusBarBackgroundView.hidden = (scrollView.contentInsetAdjustmentBehavior == UIScrollViewContentInsetAdjustmentNever);
+    }
 #endif
 }
 
@@ -703,7 +750,7 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 {
     // The CDVStatusBar plugin overrides this in a category extension, and
     // should bypass this implementation entirely
-    return self.statusBar.alpha < 0.0001f;
+    return _statusBarHidden;
 }
 #endif
 
@@ -790,8 +837,9 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     webViewBounds.origin = self.view.bounds.origin;
 
     UIView* view = [[UIView alloc] initWithFrame:webViewBounds];
+    view.accessibilityIdentifier = @"LaunchView";
     view.translatesAutoresizingMaskIntoConstraints = NO;
-    [view setAlpha:0];
+    view.alpha = 0;
 
     NSString* launchStoryboardName = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"UILaunchStoryboardName"];
     if (launchStoryboardName != nil) {
@@ -848,7 +896,7 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     }
 }
 
-- (void)createStatusBarView
+- (void)createStatusBarBackgroundView
 {
 #if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
     // If cordova-plugin-statusbar is loaded, we'll let it handle the status
@@ -856,17 +904,33 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     if (NSClassFromString(@"CDVStatusBar") != nil)
         return;
 
-    self.statusBar = [[UIView alloc] init];
-    self.statusBar.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusBarBackgroundView = [[UIView alloc] init];
+    self.statusBarBackgroundView.translatesAutoresizingMaskIntoConstraints = NO;
+    self.statusBarBackgroundView.accessibilityIdentifier = @"StatusBarBackground";
+    self.statusBarBackgroundView.hidden = YES;
 
-    [self.view addSubview:self.statusBar];
+    [self.view addSubview:self.statusBarBackgroundView];
 
-    [self.statusBar.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor].active = YES;
-    [self.statusBar.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor].active = YES;
-    [self.statusBar.topAnchor constraintEqualToAnchor:self.view.topAnchor].active = YES;
-    [self.statusBar.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor].active = YES;
+    _topStatusBarConstraints = @[
+        [self.statusBarBackgroundView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.statusBarBackgroundView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.statusBarBackgroundView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.statusBarBackgroundView.bottomAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.topAnchor]
+    ];
 
-    self.statusBar.hidden = YES;
+    _leftStatusBarConstraints = @[
+        [self.statusBarBackgroundView.leadingAnchor constraintEqualToAnchor:self.view.leadingAnchor],
+        [self.statusBarBackgroundView.trailingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.leadingAnchor],
+        [self.statusBarBackgroundView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.statusBarBackgroundView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+    ];
+
+    _rightStatusBarConstraints = @[
+        [self.statusBarBackgroundView.leadingAnchor constraintEqualToAnchor:self.view.safeAreaLayoutGuide.trailingAnchor],
+        [self.statusBarBackgroundView.trailingAnchor constraintEqualToAnchor:self.view.trailingAnchor],
+        [self.statusBarBackgroundView.topAnchor constraintEqualToAnchor:self.view.topAnchor],
+        [self.statusBarBackgroundView.bottomAnchor constraintEqualToAnchor:self.view.bottomAnchor]
+    ];
 #endif
 }
 
@@ -998,7 +1062,7 @@ static BOOL deviceReadyWatchdogReloaded = NO;
     CGFloat fadeDuration = fadeSplashScreenDuration/1000;
 
     [UIView animateWithDuration:fadeDuration animations:^{
-        [self.launchView setAlpha:(visible ? 1 : 0)];
+        self.launchView.alpha = (visible ? 1 : 0);
 
         if (!visible) {
             [self.webView becomeFirstResponder];
@@ -1190,9 +1254,33 @@ static BOOL deviceReadyWatchdogReloaded = NO;
 - (void)showStatusBar:(BOOL)visible
 {
 #if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
-    [self.statusBar setAlpha:(visible ? 1 : 0)];
+    _statusBarHidden = !visible;
+
+    UIScrollView *scrollView = [self.webView performSelector:@selector(scrollView)];
+    [self scrollViewDidChangeAdjustedContentInset:scrollView];
+
     [self setNeedsStatusBarAppearanceUpdate];
 #endif
+}
+
+- (UIStatusBarStyle)preferredStatusBarStyle
+{
+    // Since iOS 18.5, the system automatically determines the status bar style based on the background color of the status bar
+    // so let the system handle it
+    if (@available(iOS 18.5, *)) {
+        return [super preferredStatusBarStyle];
+    }
+
+    CGFloat red = 0.f;
+    CGFloat green = 0.f;
+    CGFloat blue = 0.f;
+
+    if (![self.statusBarBackgroundColor getRed:&red green:&green blue:&blue alpha:nil]) {
+        return UIStatusBarStyleDefault;
+    }
+
+    CGFloat luminance = 0.299f * red + 0.587f * green + 0.114f * blue;
+    return luminance > 0.5f ? UIStatusBarStyleDarkContent : UIStatusBarStyleLightContent;
 }
 
 - (void)parseSettingsWithParser:(id <NSXMLParserDelegate>)delegate

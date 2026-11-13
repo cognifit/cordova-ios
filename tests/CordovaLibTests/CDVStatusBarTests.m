@@ -42,6 +42,11 @@
     self.viewController = self.appDelegate.testViewController;
 
     self.plugin = (CDVWebViewEngine *)self.viewController.webViewEngine;
+    // StatusBar JavaScript APIs use cordova.exec to update native state. The
+    // shared test helper registers a no-op native plugin that lets each test
+    // wait until those exec calls have reached native code before asserting the
+    // view controller's statusBarBackgroundColor.
+    [self registerCordovaCommandQueueTestPluginForViewController:self.viewController];
 }
 
 - (void)tearDown {
@@ -52,17 +57,13 @@
 - (void) testStatusBarBackgroundColorNamedColor {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('red');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('red');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -74,17 +75,13 @@
 - (void) testStatusBarBackgroundColor3HexColor {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('#f00');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('#f00');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -96,17 +93,13 @@
 - (void) testStatusBarBackgroundColor6HexColor {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('#ff0000');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('#ff0000');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -118,17 +111,13 @@
 - (void) testStatusBarBackgroundColor8HexColor {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('#ff000080');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('#ff000080');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -140,17 +129,13 @@
 - (void) testStatusBarBackgroundColorRGB {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('rgb(255, 0, 0)');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('rgb(255, 0, 0)');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -162,17 +147,13 @@
 - (void) testStatusBarBackgroundColorRGBA {
     CGFloat rgba[4] = {0.f, 0.f, 0.f, 0.f};
 
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
     [self.viewController loadStartPage];
-
-    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired];
     [self waitForExpectations:@[loadExpectation] timeout:5];
 
-    __block XCTestExpectation *redExpectation = [self expectationWithDescription:@"red"];
-    [self.plugin evaluateJavaScript:@"window.statusbar.setBackgroundColor('rgba(255, 0, 0, 0.25)');" completionHandler:^(id _, NSError* error) {
-        XCTAssertNil(error);
-        [redExpectation fulfill];
-    }];
-    [self waitForExpectations:@[redExpectation] timeout:5];
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('rgba(255, 0, 0, 0.25)');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
 
     [self.viewController.statusBarBackgroundColor getRed:&rgba[0] green:&rgba[1] blue:&rgba[2] alpha:&rgba[3]];
     XCTAssertEqual(rgba[0], 1.f);
@@ -180,5 +161,58 @@
     XCTAssertEqual(rgba[2], 0.f);
     XCTAssertEqual(rgba[3], 0.25f);
 }
+
+- (void)testStatusBarAppearanceFollowsBackgroundColor {
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
+    [self.viewController loadStartPage];
+    [self waitForExpectations:@[loadExpectation] timeout:5];
+
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('#ffffff');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
+
+    // Since iOS 18.5, the system automatically determines the status bar style based on the background color of the status bar
+    // Check this
+    if (@available(iOS 18.5, *)) {
+        XCTAssertEqual(self.viewController.preferredStatusBarStyle, [UIViewController new].preferredStatusBarStyle);
+        return;
+    }
+
+    XCTAssertEqual(self.viewController.preferredStatusBarStyle, UIStatusBarStyleDarkContent);
+
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('#000000');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
+
+    XCTAssertEqual(self.viewController.preferredStatusBarStyle, UIStatusBarStyleLightContent);
+}
+
+#if !defined(TARGET_OS_VISION) || !TARGET_OS_VISION
+- (void) testStatusBarHidden {
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
+    [self.viewController loadStartPage];
+    [self waitForExpectations:@[loadExpectation] timeout:5];
+
+    XCTAssertEqual([self.viewController prefersStatusBarHidden], false);
+
+    [self evaluateJavaScript:@"window.statusbar.visible = false;"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
+
+    XCTAssertEqual([self.viewController prefersStatusBarHidden], true);
+}
+
+- (void) testTransparentStatusBarBackgroundIsNotHidden {
+    XCTestExpectation *loadExpectation = [[XCTNSNotificationExpectation alloc] initWithName:CDVTestingDeviceReadyFired object:self.viewController.webView];
+    [self.viewController loadStartPage];
+    [self waitForExpectations:@[loadExpectation] timeout:5];
+
+    [self evaluateJavaScript:@"window.statusbar.setBackgroundColor('transparent');"
+andWaitForCordovaCommandQueueWithWebViewEngine:self.plugin
+                     timeout:5];
+
+    XCTAssertEqual([self.viewController prefersStatusBarHidden], false);
+}
+#endif
 
 @end

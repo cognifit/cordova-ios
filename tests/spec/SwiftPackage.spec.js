@@ -101,6 +101,19 @@ describe('SwiftPackage', () => {
             expect(content).toContain('.iOS("18.4")');
             expect(content).toContain('.macCatalyst("18.4")');
         });
+
+        it('should update deployment target when package already uses string syntax', () => {
+            pkg.updateDeploymentTarget('18.4');
+            pkg.updateDeploymentTarget('19.1');
+
+            const pkgPath = path.join(tmpDir.name, 'packages', 'cordova-ios-plugins', 'Package.swift');
+            const content = fs.readFileSync(pkgPath, 'utf8');
+
+            expect(content).toContain('.iOS("19.1")');
+            expect(content).toContain('.macCatalyst("19.1")');
+            expect(content).not.toContain('.iOS("18.4")');
+            expect(content).not.toContain('.macCatalyst("18.4")');
+        });
     });
 
     describe('addPlugin', () => {
@@ -129,6 +142,18 @@ describe('SwiftPackage', () => {
             const content = fs.readFileSync(pkgPath, 'utf8');
             expect(content).toContain('.package(name: "my-plugin", path: "../my-plugin")');
             expect(content).toContain('.product(name: "my-plugin", package: "my-plugin")');
+        });
+
+        it('should replace plugin variables in the package file', () => {
+            pkg.addPlugin(my_plugin, {
+                variables: {
+                    SDK_VERSION: '0.0.1'
+                }
+            });
+
+            const pkgPath = path.join(tmpDir.name, 'packages', 'my-plugin', 'Package.swift');
+            const content = fs.readFileSync(pkgPath, 'utf8');
+            expect(content).toContain('.package(url: "https://github.com/apache/sdk.git", exact: "0.0.1")');
         });
 
         it('should copy the plugin into the packages directory', () => {
