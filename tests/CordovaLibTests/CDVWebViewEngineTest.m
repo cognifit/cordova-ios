@@ -257,3 +257,91 @@
 }
 
 @end
+
+@interface CDVUIDelegateController : CDVViewController <WKUIDelegate>
+@end
+@implementation CDVUIDelegateController
+@end
+
+@interface CDVExternalUIDelegate : NSObject <WKUIDelegate>
+@end
+@implementation CDVExternalUIDelegate
+@end
+
+@interface CDVUIDelegateLifetimeTests : XCTestCase
+@end
+@implementation CDVUIDelegateLifetimeTests
+
+- (void)assertControllerReleasedAfterUpdatingDelegate:(BOOL)updateDelegate
+{
+    __weak CDVViewController *weakController;
+    CDVWebViewEngine *engine;
+    @autoreleasepool {
+        CDVUIDelegateController *controller = [CDVUIDelegateController new];
+        controller.startPage = @"index.html";
+        [controller loadViewIfNeeded];
+        weakController = controller;
+        engine = (CDVWebViewEngine *)controller.webViewEngine;
+        if (updateDelegate) {
+            [engine updateWithInfo:@{kCDVWebViewEngineWKUIDelegate: [CDVExternalUIDelegate new]}];
+            [engine updateWithInfo:@{kCDVWebViewEngineWKUIDelegate: controller}];
+        }
+        XCTAssertEqual(engine.uiDelegate, controller);
+        XCTAssertEqual(((WKWebView *)engine.engineWebView).UIDelegate, controller);
+    }
+    XCTAssertNil(weakController, @"The engine must not retain its owning controller as UI delegate");
+    XCTAssertNil(engine.uiDelegate, @"Controller deallocation must dispose its engine");
+    XCTAssertNil(engine.engineWebView);
+    // Clean up even when reproducing the retain cycle on an unfixed engine.
+    [engine dispose];
+}
+
+- (void)testOwningUIDelegateControllerIsReleased
+{
+    [self assertControllerReleasedAfterUpdatingDelegate:NO];
+}
+
+- (void)testUpdateWithInfoDoesNotRetainOwningController
+{
+    [self assertControllerReleasedAfterUpdatingDelegate:YES];
+}
+
+- (void)testExternalDelegateRetainedUntilAppSwitchDisposesEngine
+{
+    CDVViewController *controller = [CDVViewController new];
+    XCTAssertTrue(([controller configureWebApps:@{
+        @"first": @{@"root": @"www", @"startPage": @"index.html"},
+        @"second": @{@"root": @"www", @"startPage": @"index.html?second"}
+    } defaultAppID:@"first" error:nil]));
+    CDVWebViewEngine *oldEngine;
+    __weak id defaultDelegate;
+    @autoreleasepool {
+        [controller loadViewIfNeeded];
+        oldEngine = (CDVWebViewEngine *)controller.webViewEngine;
+        defaultDelegate = oldEngine.uiDelegate;
+        XCTAssertNotNil(defaultDelegate);
+    }
+    __weak CDVExternalUIDelegate *externalDelegate;
+    @autoreleasepool {
+        XCTAssertNotNil(defaultDelegate, @"The default UI delegate must survive its creation pool");
+        CDVExternalUIDelegate *delegate = [CDVExternalUIDelegate new];
+        externalDelegate = delegate;
+        [oldEngine updateWithInfo:@{kCDVWebViewEngineWKUIDelegate: delegate}];
+    }
+    @autoreleasepool {
+        XCTAssertNil(defaultDelegate);
+        XCTAssertNotNil(externalDelegate);
+        XCTAssertEqual(oldEngine.uiDelegate, externalDelegate);
+        XCTAssertEqual(((WKWebView *)oldEngine.engineWebView).UIDelegate, externalDelegate);
+        WKWebView *oldWebView = (WKWebView *)oldEngine.engineWebView;
+        XCTAssertTrue([controller switchToWebApp:@"second" remember:NO context:nil error:nil]);
+        XCTAssertNotEqual(controller.webViewEngine, oldEngine);
+        XCTAssertNil(oldEngine.uiDelegate);
+        XCTAssertNil(oldEngine.engineWebView);
+        XCTAssertNil(oldWebView.UIDelegate);
+    }
+    XCTAssertNil(externalDelegate);
+    XCTAssertNotNil(((CDVWebViewEngine *)controller.webViewEngine).uiDelegate);
+}
+
+@end

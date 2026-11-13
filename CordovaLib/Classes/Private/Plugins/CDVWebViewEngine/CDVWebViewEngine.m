@@ -43,7 +43,8 @@
 @property (nonatomic, readwrite) NSString *CDV_ASSETS_URL;
 @property (nonatomic, readwrite) Boolean cdvIsFileScheme;
 @property (nullable, nonatomic, strong, readwrite) WKWebViewConfiguration *configuration;
-@property (nonatomic, strong, readwrite) id <WKUIDelegate> uiDelegate;
+@property (nonatomic, weak, readwrite) id <WKUIDelegate> uiDelegate;
+@property (nonatomic, strong) id <WKUIDelegate> retainedUIDelegate;
 
 @end
 
@@ -53,6 +54,15 @@
 @implementation CDVWebViewEngine
 
 @synthesize engineWebView = _engineWebView;
+@synthesize uiDelegate = _uiDelegate;
+
+- (void)setUiDelegate:(id<WKUIDelegate>)uiDelegate
+{
+    // The controller owns this engine. Retain independently supplied delegates,
+    // but never turn controller -> engine -> UI delegate into a retain cycle.
+    self.retainedUIDelegate = uiDelegate == (id)self.viewController ? nil : uiDelegate;
+    _uiDelegate = uiDelegate;
+}
 
 - (nullable instancetype)initWithFrame:(CGRect)frame configuration:(nullable WKWebViewConfiguration *)configuration
 {
@@ -292,7 +302,7 @@
         uiDelegate.mediaPermissionGrantType = [self parsePermissionGrantType:[settings cordovaSettingForKey:@"MediaPermissionGrantType"]];
         uiDelegate.allowNewWindows = [settings cordovaBoolSettingForKey:@"AllowNewWindows" defaultValue:NO];
 
-        // Assigning to self.uiDelegate keeps a strong reference to the delegate,
+        // Assigning to self.uiDelegate retains this separate delegate,
         // since WKWebView.UIDelegate is weak and would cause the delegate to be
         // deallocated
         self.uiDelegate = uiDelegate;
@@ -319,6 +329,7 @@
 {
     WKWebView* wkWebView = (WKWebView*)_engineWebView;
     [wkWebView.configuration.userContentController removeScriptMessageHandlerForName:CDV_BRIDGE_NAME];
+    wkWebView.UIDelegate = nil;
     self.uiDelegate = nil;
     _engineWebView = nil;
 
@@ -446,7 +457,7 @@
     }
 
     if (uiDelegate && [uiDelegate conformsToProtocol:@protocol(WKUIDelegate)]) {
-        // Keep a strong reference to the delegate, since WKWebView.UIDelegate is weak
+        // The setter retains separate delegates, but not the owning controller.
         self.uiDelegate = uiDelegate;
         wkWebView.UIDelegate = self.uiDelegate;
     }

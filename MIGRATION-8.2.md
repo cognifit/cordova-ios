@@ -16,7 +16,10 @@ native streams, touch lifecycle handling, media playback, and asset byte ranges.
 The controller merge keeps the cold-boot deviceready watchdog and app-selection
 state while adopting upstream's status-bar background naming, visibility,
 appearance, and layout changes. The upstream WKUIDelegate retention fix is
-included; disposing an engine during app replacement clears its retained delegate.
+included, with an ownership correction from independent review: an engine holds
+its owning controller weakly when that controller implements WKUIDelegate.
+Default and external UI delegates remain retained. Disposing an engine during
+app replacement clears both its retained delegate and the old web view's delegate.
 The previously backported scene/deep-link fixes are also part of upstream 8.2.0.
 
 Dependencies and the lockfile follow the release, including `xcode` 4 and
@@ -37,6 +40,12 @@ The native test harness now scopes deviceready notifications to their originatin
 web view. Previously, a late notification from another controller could release
 a status-bar test before its own JavaScript was ready. No production API changes
 were needed for this correction.
+
+Independent-review follow-up reproduced a controller retain cycle in both initial
+delegate setup and `updateWithInfo:` before the ownership correction. On an
+iPhone 18 Pro simulator (iOS 27.2), the corrected engine passed all 101 native
+tests, including three new lifetime regressions covering controller release,
+external delegate retention, and app-switch disposal.
 
 Consuming apps should still smoke-test their own plugin inventory, stored login
 state, repeated app switching, secondary media, and background/foreground touch
