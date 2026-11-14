@@ -261,6 +261,11 @@
 @interface CDVUIDelegateController : CDVViewController <WKUIDelegate>
 @end
 @implementation CDVUIDelegateController
+- (void)loadStartPage
+{
+    // Exercise real engine setup without navigation/splash callbacks retaining
+    // the controller while this test measures delegate ownership.
+}
 @end
 
 @interface CDVExternalUIDelegate : NSObject <WKUIDelegate>
@@ -277,9 +282,15 @@
     __weak CDVViewController *weakController;
     CDVWebViewEngine *engine;
     @autoreleasepool {
+        id appDelegate = UIApplication.sharedApplication.delegate;
+        id previousController = [appDelegate valueForKey:@"viewController"];
         CDVUIDelegateController *controller = [CDVUIDelegateController new];
         controller.startPage = @"index.html";
         [controller loadViewIfNeeded];
+        // The first Cordova controller also populates CDVAppDelegate's retained,
+        // deprecated viewController alias. Restore it so only engine ownership
+        // is under test, regardless of whether this class runs first or alone.
+        [appDelegate setValue:previousController forKey:@"viewController"];
         weakController = controller;
         engine = (CDVWebViewEngine *)controller.webViewEngine;
         if (updateDelegate) {
@@ -289,6 +300,15 @@
         XCTAssertEqual(engine.uiDelegate, controller);
         XCTAssertEqual(((WKWebView *)engine.engineWebView).UIDelegate, controller);
     }
+    // UIKit/WebKit startup may temporarily keep the controller alive beyond the
+    // autorelease pool. A retain cycle would prevent this expectation forever.
+    NSPredicate *released = [NSPredicate predicateWithBlock:^BOOL(id object, NSDictionary *bindings) {
+        @autoreleasepool {
+            return weakController == nil;
+        }
+    }];
+    XCTestExpectation *deallocated = [self expectationForPredicate:released evaluatedWithObject:nil handler:nil];
+    [self waitForExpectations:@[deallocated] timeout:5];
     XCTAssertNil(weakController, @"The engine must not retain its owning controller as UI delegate");
     XCTAssertNil(engine.uiDelegate, @"Controller deallocation must dispose its engine");
     XCTAssertNil(engine.engineWebView);
